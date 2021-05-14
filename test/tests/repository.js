@@ -5,7 +5,7 @@ var local = path.join.bind(path, __dirname);
 var IndexUtils = require("../utils/index_setup");
 var RepoUtils = require("../utils/repository_setup");
 
-describe("Repository", function() {
+describe.only("Repository", function() {
   var NodeGit = require("../../");
   var Repository = NodeGit.Repository;
   var Index = NodeGit.Index;
@@ -15,19 +15,34 @@ describe("Repository", function() {
   var newRepoPath = local("../repos/newrepo");
   var emptyRepoPath = local("../repos/empty");
 
+
+  function delay(t, v) {
+    return new Promise(function(resolve) { 
+        setTimeout(resolve.bind(null, v), t);
+    });
+  }
+
   beforeEach(function() {
     var test = this;
 
-    return Repository.open(reposPath)
-      .then(function(repository) {
-        test.repository = repository;
-      })
+    console.log("pid", process.pid);
+
+    return delay(1)//(14000)
       .then(function() {
-        return Repository.open(emptyRepoPath);
-      })
-      .then(function(emptyRepo) {
-        test.emptyRepo = emptyRepo;
+
+        return Repository.open(reposPath)
+        .then(function(repository) {
+          test.repository = repository;
+        })
+        .then(function() {
+          return Repository.open(emptyRepoPath);
+        })
+        .then(function(emptyRepo) {
+          test.emptyRepo = emptyRepo;
+        });
+
       });
+
   });
 
   it("cannot instantiate a repository", function() {
@@ -350,4 +365,78 @@ describe("Repository", function() {
         assert.equal(numMergeHeads, 1);
       });
   });
+
+  it("can show statistics of test repo", function() {
+    return this.repository.statistics()
+    .then(function(analysisReport) {
+      console.log(JSON.stringify(analysisReport,null,2));
+
+      // TO TEST:
+      // console.dir(analysisReport);
+      // console.table(analysisReport);
+      // Object.entries(analysisReport);
+
+      // assert.equal(
+      //   analysisReport.testKey1.toString(),
+      //   "testValue1"
+      // );
+      // assert.equal(
+      //   analysisReport.testKey2.toString(),
+      //   "testValue2"
+      // );      
+    });
+  });
+
+  it("can show statistics of nodegit repo", function() {
+    Repository.open("/Users/alex/Repos/AlexaXs/nodegit/")
+      .then(function(repo) {
+        return repo.statistics()
+          .then(function(analysisReport) {
+            console.log(JSON.stringify(analysisReport,null,2));
+          });
+      });
+  });
+
+  it("can show statistics of GK repo", function() {
+    Repository.open("/Users/alex/Repos/AlexaXs/GitKraken/")
+      .then(function(repo) {
+        return repo.statistics()
+          .then(function(analysisReport) {
+            console.log(JSON.stringify(analysisReport,null,2));
+          });
+      });
+  });
+
+  it.only("can show statistics of my test repo", function() {
+    Repository.open("/Users/alex/Repos/AlexaXs/Test/")
+      .then(function(repo) {
+        return repo.statistics()
+          .then(function(analysisReport) {
+            console.log(JSON.stringify(analysisReport,null,2));
+          });
+      });
+  });  
+
+  // it.only("can show statistics of my test repo", function() {
+
+  //   Repository.open("/Users/alex/Repos/AlexaXs/Test/")
+  //     .then(function(repo) {
+  //       repo.defaultSignature()
+  //       .then(function(sign) {
+  //         console.log(sign);
+  //       });
+
+  //       // let targetObject = NodeGit.Object.lookup(
+  //       //   repo,
+  //       //   "93327fe3b9ef6e369d77ca529595324899da3c48",
+  //       //   NodeGit.Object.TYPE.COMMIT)
+  //       // .then(function(to) {
+  //       //   return to;
+  //       // });
+
+        
+
+  //     });
+  // });  
+
 });
