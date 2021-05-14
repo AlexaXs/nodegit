@@ -391,21 +391,21 @@ static int calculateTagStatistics(const git_oid *oid_tag, ForeachOdbCbPayload *p
  */
 static int foreachOdbCb(const git_oid *oid, void *payloadToCast)
 {
-  // ForeachOdbCbPayload *payload = static_cast<ForeachOdbCbPayload *>(payloadToCast);
+  ForeachOdbCbPayload *payload = static_cast<ForeachOdbCbPayload *>(payloadToCast);
   
   // // emplace (to mark it as analyzed) or return if object already analyzed
   // if (payload->uniqueObjects.emplace(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ).second == false) {
   //   return GIT_OK;
   // }
 
-  // git_odb_object *obj {nullptr};
-  // if (git_odb_read(&obj, payload->odb, oid) != GIT_OK) {
-  //   return GIT_EUSER;
-  // }
+  git_odb_object *obj {nullptr};
+  if (git_odb_read(&obj, payload->odb, oid) != GIT_OK) {
+    return GIT_EUSER;
+  }
 
   // git_object_t otype = git_odb_object_type(obj);
   // size_t osize = git_odb_object_size(obj);
-  // git_odb_object_free(obj);
+  git_odb_object_free(obj);
 
   // switch (otype)
   // {
