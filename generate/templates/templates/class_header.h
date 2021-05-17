@@ -7,6 +7,7 @@
 #include <memory>
 #include <unordered_set>
 #include <set>
+#include <vector>
 #include <sstream>
 
 #include "async_baton.h"
@@ -17,6 +18,7 @@
 #include "nodegit_wrapper.h"
 #include "promise_completion.h"
 #include "reference_counter.h"
+#include "work_pool.h"
 
 extern "C" {
 #include <git2.h>
