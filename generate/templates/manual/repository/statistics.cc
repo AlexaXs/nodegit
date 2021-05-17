@@ -393,10 +393,10 @@ static int foreachOdbCb(const git_oid *oid, void *payloadToCast)
 {
   ForeachOdbCbPayload *payload = static_cast<ForeachOdbCbPayload *>(payloadToCast);
   
-  // emplace (to mark it as analyzed) or return if object already analyzed
-  if (payload->uniqueObjects.emplace(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ).second == false) {
-    return GIT_OK;
-  }
+  // // emplace (to mark it as analyzed) or return if object already analyzed
+  // if (payload->uniqueObjects.emplace(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ).second == false) {
+  //   return GIT_OK;
+  // }
 
   git_odb_object *obj {nullptr};
   if (git_odb_read(&obj, payload->odb, oid) != GIT_OK) {
@@ -404,7 +404,7 @@ static int foreachOdbCb(const git_oid *oid, void *payloadToCast)
   }
 
   git_object_t otype = git_odb_object_type(obj);
-  size_t osize = git_odb_object_size(obj);
+  // size_t osize = git_odb_object_size(obj);
   git_odb_object_free(obj);
 
   switch (otype)
@@ -412,82 +412,103 @@ static int foreachOdbCb(const git_oid *oid, void *payloadToCast)
     case GIT_OBJECT_COMMIT:
     {
       // calculate statistics for properties "repositorySize" and "biggestObjects"
-      ++payload->statistics->repositorySize.commits.count;
-      payload->statistics->repositorySize.commits.size += osize;
+      // ++payload->statistics->repositorySize.commits.count;
+      // payload->statistics->repositorySize.commits.size += osize;
 
-      payload->statistics->biggestObjects.commits.maxSize = std::max(payload->statistics->biggestObjects.commits.maxSize, osize);
+      // payload->statistics->biggestObjects.commits.maxSize = std::max(payload->statistics->biggestObjects.commits.maxSize, osize);
 
       git_commit *commit {nullptr};
       if (git_commit_lookup(&commit, payload->repo, oid) != GIT_OK) {
         return GIT_EUSER;
       }
       
-      size_t numParents  = git_commit_parentcount(commit);
-      payload->statistics->biggestObjects.commits.maxParents = std::max(payload->statistics->biggestObjects.commits.maxParents, numParents);
+      // size_t numParents  = git_commit_parentcount(commit);
+      // payload->statistics->biggestObjects.commits.maxParents = std::max(payload->statistics->biggestObjects.commits.maxParents, numParents);
 
-      // add commit to tree, to build commit history
-      payload->commitTree->AddNode(oid, commit, numParents);
+      // // add commit to tree, to build commit history
+      // payload->commitTree->AddNode(oid, commit, numParents);
       
-      // calculate statistics of the tree pointed by this commit
-      const git_oid *oid_tree = git_commit_tree_id(commit);
-      std::string oid_treeStr = std::string(reinterpret_cast<const char *>(oid_tree->id), GIT_OID_RAWSZ);
-      std::unordered_map<std::string, TreeStatistics>::iterator itTreeStats {};
+      // // calculate statistics of the tree pointed by this commit
+      // const git_oid *oid_tree = git_commit_tree_id(commit);
+      // std::string oid_treeStr = std::string(reinterpret_cast<const char *>(oid_tree->id), GIT_OID_RAWSZ);
+      // std::unordered_map<std::string, TreeStatistics>::iterator itTreeStats {};
 
-      // emplace (to mark it as analyzed) or retrieve the tree statistics already calculated.
-      if (payload->uniqueObjects.emplace(oid_treeStr).second == true) {
-        if (calculateTreeStatistics(oid_tree, payload) != GIT_OK) {
-          git_commit_free(commit);
-          return GIT_EUSER;
-        }
-      }
+      // // emplace (to mark it as analyzed) or retrieve the tree statistics already calculated.
+      // if (payload->uniqueObjects.emplace(oid_treeStr).second == true) {
+      //   if (calculateTreeStatistics(oid_tree, payload) != GIT_OK) {
+      //     git_commit_free(commit);
+      //     return GIT_EUSER;
+      //   }
+      // }
 
       git_commit_free(commit);
       
-      // update statistics for property "biggestCheckouts"
-      itTreeStats = payload->treesStatistics.find(oid_treeStr);
-      if (itTreeStats != payload->treesStatistics.end())
-      {
-        TreeStatistics &treeStats = itTreeStats->second;
-        TreeStatistics &biggestCheckouts = payload->statistics->biggestCheckouts;
+      // // update statistics for property "biggestCheckouts"
+      // itTreeStats = payload->treesStatistics.find(oid_treeStr);
+      // if (itTreeStats != payload->treesStatistics.end())
+      // {
+      //   TreeStatistics &treeStats = itTreeStats->second;
+      //   TreeStatistics &biggestCheckouts = payload->statistics->biggestCheckouts;
 
-        biggestCheckouts.numDirectories = std::max(biggestCheckouts.numDirectories, treeStats.numDirectories);
-        biggestCheckouts.maxPathDepth = std::max(biggestCheckouts.maxPathDepth, treeStats.maxPathDepth);
-        biggestCheckouts.maxPathLength = std::max(biggestCheckouts.maxPathLength, treeStats.maxPathLength);
-        biggestCheckouts.numFiles = std::max(biggestCheckouts.numFiles, treeStats.numFiles);
-        biggestCheckouts.totalFileSize = std::max(biggestCheckouts.totalFileSize, treeStats.totalFileSize);
-        biggestCheckouts.numSymlinks = std::max(biggestCheckouts.numSymlinks, treeStats.numSymlinks);
-        biggestCheckouts.numSubmodules = std::max(biggestCheckouts.numSubmodules, treeStats.numSubmodules);
-      }
+      //   biggestCheckouts.numDirectories = std::max(biggestCheckouts.numDirectories, treeStats.numDirectories);
+      //   biggestCheckouts.maxPathDepth = std::max(biggestCheckouts.maxPathDepth, treeStats.maxPathDepth);
+      //   biggestCheckouts.maxPathLength = std::max(biggestCheckouts.maxPathLength, treeStats.maxPathLength);
+      //   biggestCheckouts.numFiles = std::max(biggestCheckouts.numFiles, treeStats.numFiles);
+      //   biggestCheckouts.totalFileSize = std::max(biggestCheckouts.totalFileSize, treeStats.totalFileSize);
+      //   biggestCheckouts.numSymlinks = std::max(biggestCheckouts.numSymlinks, treeStats.numSymlinks);
+      //   biggestCheckouts.numSubmodules = std::max(biggestCheckouts.numSubmodules, treeStats.numSubmodules);
+      // }
     }
       break;
 
     case GIT_OBJECT_TREE:
-      // calculate statistics for property "biggestCheckouts"
-      if (calculateTreeStatistics(oid, payload) != GIT_OK) {
+    {
+      git_tree *tree {nullptr};
+      if (git_tree_lookup(&tree, payload->repo, oid) != GIT_OK) {
         return GIT_EUSER;
       }
+      git_tree_free(tree);
+    }
+
+      // // calculate statistics for property "biggestCheckouts"
+      // if (calculateTreeStatistics(oid, payload) != GIT_OK) {
+      //   return GIT_EUSER;
+      // }
       break;
 
     case GIT_OBJECT_BLOB:
-      // calculate statistics for properties "repositorySize" and "biggestObjects"
-      ++payload->statistics->repositorySize.blobs.count;
-      payload->statistics->repositorySize.blobs.size += osize;
+    {
+      git_blob *blob {nullptr};
+      if (git_blob_lookup(&blob, payload->repo, oid) != GIT_OK) {
+        return GIT_EUSER;
+      }
+      git_blob_free(blob);
+    }
+      // // calculate statistics for properties "repositorySize" and "biggestObjects"
+      // ++payload->statistics->repositorySize.blobs.count;
+      // payload->statistics->repositorySize.blobs.size += osize;
 
-      payload->statistics->biggestObjects.blobs.maxSize = std::max(payload->statistics->biggestObjects.blobs.maxSize, osize);
+      // payload->statistics->biggestObjects.blobs.maxSize = std::max(payload->statistics->biggestObjects.blobs.maxSize, osize);
       break;
 
     case GIT_OBJECT_TAG:
     {
-      // calculate statistics for property "repositorySize" and "historyStructure"
-      if (calculateTagStatistics(oid, payload) != GIT_OK) {
+      git_tag *tag {nullptr};
+      if (git_tag_lookup(&tag, payload->repo, oid) != GIT_OK) {
         return GIT_EUSER;
       }
+      git_tag_free(tag);
 
-      // update maximum tag depth for property "historyStructure"
-      std::unordered_map<std::string, size_t>::iterator itTagDepth = payload->tagsDepth.find(std::string(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ));
-      if (itTagDepth != payload->tagsDepth.end()) {
-        payload->statistics->historyStructure.maxTagDepth = std::max(payload->statistics->historyStructure.maxTagDepth, itTagDepth->second);
-      }
+      // // calculate statistics for property "repositorySize" and "historyStructure"
+      // if (calculateTagStatistics(oid, payload) != GIT_OK) {
+      //   return GIT_EUSER;
+      // }
+
+      // // update maximum tag depth for property "historyStructure"
+      // std::unordered_map<std::string, size_t>::iterator itTagDepth = payload->tagsDepth.find(std::string(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ));
+      // if (itTagDepth != payload->tagsDepth.end()) {
+      //   payload->statistics->historyStructure.maxTagDepth = std::max(payload->statistics->historyStructure.maxTagDepth, itTagDepth->second);
+      // }
     }
       break;
 
