@@ -1,103 +1,109 @@
 /**
- * \struct CommitTreeNode
+ * \struct CommitsGraphNode
  */
-struct CommitTreeNode
+struct CommitsGraphNode
 {
-  CommitTreeNode() = default;
-  ~CommitTreeNode() = default;
-  CommitTreeNode(const CommitTreeNode &other) = delete;
-  CommitTreeNode(CommitTreeNode &&other) = delete;
-  CommitTreeNode& operator=(const CommitTreeNode &other) = delete;
-  CommitTreeNode& operator=(CommitTreeNode &&other) = delete;
+  CommitsGraphNode(uint32_t aParentsLeft)
+    : parentsLeft(aParentsLeft) {}
+  CommitsGraphNode() = default;
+  ~CommitsGraphNode() = default;
+  CommitsGraphNode(const CommitsGraphNode &other) = delete;
+  CommitsGraphNode(CommitsGraphNode &&other) = delete;
+  CommitsGraphNode& operator=(const CommitsGraphNode &other) = delete;
+  CommitsGraphNode& operator=(CommitsGraphNode &&other) = delete;
 
-  std::vector<CommitTreeNode *> children {};
+  std::vector<CommitsGraphNode *> children {};
+  uint32_t parentsLeft {0}; // used when calculating the maximum history depth
 };
 
 /**
- * \class CommitTree
+ * \class CommitsGraph
  */
-class CommitTree
+class CommitsGraph
 {
 public:
-  CommitTree() = default;
-  ~CommitTree() = default;
-  CommitTree(const CommitTree &other) = delete;
-  CommitTree(CommitTree &&other) = delete;
-  CommitTree& operator=(const CommitTree &other) = delete;
-  CommitTree& operator=(CommitTree &&other) = delete;
+  CommitsGraph() = default;
+  ~CommitsGraph() = default;
+  CommitsGraph(const CommitsGraph &other) = delete;
+  CommitsGraph(CommitsGraph &&other) = delete;
+  CommitsGraph& operator=(const CommitsGraph &other) = delete;
+  CommitsGraph& operator=(CommitsGraph &&other) = delete;
 
-  using CommitTreeMap = std::unordered_map<std::string, std::unique_ptr<CommitTreeNode>>;
+  using CommitsGraphMap = std::unordered_map<std::string, std::unique_ptr<CommitsGraphNode>>;
 
-  void AddNode(const git_oid *oid, const git_commit *commit, unsigned int numParents);
-  size_t CalculateMaxDepth() const;
+  void AddNode(const git_oid *oid, const git_commit *commit, uint32_t numParents);
+  uint32_t CalculateMaxDepth();
 
 private:
-  void addParentNode(const git_oid *oid, CommitTreeNode *child);
+  void addParentNode(const git_oid *oid, CommitsGraphNode *child);
 
-  CommitTreeMap m_mapOidNode {};
-  std::vector<CommitTreeNode *> m_roots {};
+  CommitsGraphMap m_mapOidNode {};
+  std::vector<CommitsGraphNode *> m_roots {};
 };
 
 /**
- * CommitTree::AddNode
+ * CommitsGraph::AddNode
  * 
  * \param oid git_oid of the commit object to add.
  * \param node git_commit object source from which to extract information for the tree node.
  * \param numParents Number of parents of the commit object.
-  */
-void CommitTree::AddNode(const git_oid *oid, const git_commit *commit, unsigned int numParents)
+ */
+void CommitsGraph::AddNode(const git_oid *oid, const git_commit *commit, uint32_t numParents)
 {
-  std::string oidStr(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ);
-  CommitTreeMap::iterator it = m_mapOidNode.find(oidStr);
+  auto nodePair = m_mapOidNode.emplace(std::make_pair(
+    std::string(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ),
+    std::make_unique<CommitsGraphNode>(numParents)));
 
-  // add node if not added yet
-  if (it == m_mapOidNode.end()) {
-    std::pair<CommitTreeMap::iterator, bool> pairInsert = m_mapOidNode.insert({oidStr, std::make_unique<CommitTreeNode>()});
-    it = pairInsert.first;
+  CommitsGraphMap::iterator itNode = nodePair.first;
+
+  // if this node already added by a child, update its parentsLeft
+  if (nodePair.second == false) {
+    itNode->second.get()->parentsLeft = numParents;
   }
 
   // set root
   if (numParents == 0) {
-    m_roots.emplace_back(it->second.get());
+    m_roots.emplace_back(itNode->second.get());
   }
 
   // add parents
   for (unsigned int i = 0; i < numParents; ++i) {
-    addParentNode(git_commit_parent_id(commit, i), it->second.get());
+    addParentNode(git_commit_parent_id(commit, i), itNode->second.get());
   }
 }
 
 /**
- * CommitTree::CalculateMaxDepth
+ * CommitsGraph::CalculateMaxDepth
  * \return Calculated maximum depth of the tree.
  * 
  * Uses iterative algorithm to count levels.
- * Considers that children of one level can have multiple parents, hence we insert unique children at each level.
- * Considers that same child can be in different levels, needed to count the longest path to that level.
  * Considers multiple initial commits.
+ * Considers that children of one level can have multiple parents, hence we insert unique children at each level.
+ * Considers that same child can be in different levels. Here to prevent counting the same child multiple times,
+ * we only add a child when the last parent (parentsLeft) inserts it. This is actually what makes the algorithm fast.
  * Recursive algorithm avoided to prevent stack overflow in case of excessive levels in the tree.
-  */
-size_t CommitTree::CalculateMaxDepth() const
+ */
+uint32_t CommitsGraph::CalculateMaxDepth()
 {
-  size_t maxDepth {0};
-  std::set<const CommitTreeNode *> parents {};
-  std::set<const CommitTreeNode *> children {};
+  uint32_t maxDepth {0};
+  std::set<CommitsGraphNode *> parents {};
+  std::set<CommitsGraphNode *> children {};
 
   // initial commmits
-  for (const CommitTreeNode *root : m_roots) {
+  for (CommitsGraphNode *root : m_roots) {
     children.insert(root);
   }
 
-  while (!children.empty())
-  {
+  while (!children.empty()) {
     ++maxDepth;
-
     parents = std::move(children);
 
-    // add unique children of next level
-    for (const CommitTreeNode *parent : parents) {
-      for (const CommitTreeNode *child : parent->children) {
+    // add unique children of next level, and only if from the last parent
+    for (CommitsGraphNode *parent : parents) {
+      for (CommitsGraphNode *child : parent->children) {
+        if (--child->parentsLeft == 0) {
           children.insert(child);
+        }
       }
     }
   }
@@ -106,24 +112,19 @@ size_t CommitTree::CalculateMaxDepth() const
 }
 
 /**
- * CommitTree::addParentNode
+ * CommitsGraph::addParentNode
  * 
  * \param oid git_oid of the commit object to add.
  * \param child Child of the parent node being added.
-  */
-void CommitTree::addParentNode(const git_oid *oid_parent, CommitTreeNode *child)
+ */
+void CommitsGraph::addParentNode(const git_oid *oid_parent, CommitsGraphNode *child)
 {
-  std::string oidParentStr(reinterpret_cast<const char *>(oid_parent->id), GIT_OID_RAWSZ);
-  CommitTreeMap::iterator it = m_mapOidNode.find(oidParentStr);
-
-  // add parent node if not added yet
-  if (it == m_mapOidNode.end()) {
-    std::pair<CommitTreeMap::iterator, bool> pairInsert = m_mapOidNode.insert({oidParentStr, std::make_unique<CommitTreeNode>()});
-    it = pairInsert.first;
-  }
+  CommitsGraphMap::iterator itParentNode = m_mapOidNode.emplace(std::make_pair(
+    std::string(reinterpret_cast<const char *>(oid_parent->id), GIT_OID_RAWSZ),
+    std::make_unique<CommitsGraphNode>())).first;
 
   // add child to parent
-  it->second->children.emplace_back(child);
+  itParentNode->second->children.emplace_back(child);
 }
 
 /**
@@ -167,40 +168,126 @@ struct Statistics
     struct { size_t count {0}; size_t size {0}; } blobs;
     struct { size_t count {0}; } annotatedTags;
     struct { size_t count {0}; } references;
-  } repositorySize;
-
-  struct {
-    size_t maxDepth {0};
-    size_t maxTagDepth {0};
-  } historyStructure;
+  } repositorySize {};
 
   struct {
     struct { size_t maxSize {0}; size_t maxParents {0}; } commits;
     struct { size_t maxEntries {0}; } trees;
     struct { size_t maxSize {0}; } blobs;
-  } biggestObjects;
-  
+  } biggestObjects {};
+
+  struct {
+    uint32_t maxDepth {0};
+    uint32_t maxTagDepth {0};
+  } historyStructure {};
+
   TreeStatistics biggestCheckouts {};
 };
 
 /**
- * \class WorkItemOid
+ * \struct OdbObjectsInfo
+ */
+struct OdbObjectsInfo
+{
+  struct TreeDataAndStats {
+    TreeDataAndStats() = default;
+    ~TreeDataAndStats() = default;
+    TreeDataAndStats(const TreeDataAndStats &other) = delete;
+    TreeDataAndStats(TreeDataAndStats &&other) = default;
+    TreeDataAndStats& operator=(const TreeDataAndStats &other) = delete;
+    TreeDataAndStats& operator=(TreeDataAndStats &&other) = default;
+
+    std::vector<std::string> entryBlobs {};
+    std::vector< std::pair<std::string, size_t> > entryTreesNameLen {};
+    TreeStatistics stats {};
+    bool statsDone {false};
+  };
+
+  struct TagData {
+    static constexpr uint32_t kUnsetDepth = 0;
+
+    TagData() = default;
+    ~TagData() = default;
+    TagData(const TagData &other) = delete;
+    TagData(TagData &&other) = default;
+    TagData& operator=(const TagData &other) = delete;
+    TagData& operator=(TagData &&other) = default;
+
+    std::string oidTarget {};
+    git_object_t typeTarget {GIT_OBJECT_INVALID};
+    uint32_t depth {kUnsetDepth};
+  };
+
+  OdbObjectsInfo() = default;
+  ~OdbObjectsInfo() = default;
+  OdbObjectsInfo(const OdbObjectsInfo &other) = delete;
+  OdbObjectsInfo(OdbObjectsInfo &&other) = delete;
+  OdbObjectsInfo& operator=(const OdbObjectsInfo &other) = delete;
+  OdbObjectsInfo& operator=(OdbObjectsInfo &&other) = delete;
+
+  struct {
+    std::unordered_map<std::string, std::string> info {};
+    // tree of commits (graph) to be build while reading the object database, to obtain maximum history depth
+    CommitsGraph graph {};
+    size_t totalSize {0};
+    size_t maxSize {0};
+    size_t maxParents {0};
+  } commitsInfo {};
+
+  struct {
+    std::unordered_map<std::string, TreeDataAndStats> info;
+    size_t totalSize {0};
+    size_t totalEntries {0};
+    size_t maxEntries {0};
+  } treesInfo {};
+
+  struct {
+    std::unordered_map<std::string, size_t> info {};
+    size_t totalSize {0};
+    size_t maxSize {0};
+  } blobsInfo {};
+
+  struct {
+    std::unordered_map<std::string, TagData> info;
+  } tagsInfo {};
+
+  using iterTreeInfo = std::unordered_map<std::string, TreeDataAndStats>::iterator;
+  using iterBlobInfo = std::unordered_map<std::string, size_t>::iterator;
+  using iterTagInfo = std::unordered_map<std::string, TagData>::iterator;
+};
+
+/**
+ * \class WorkItemOdbData
  * WorkItem storing odb oids for the WorkPool.
  */
-class WorkItemOid : public WorkItem{
+class WorkItemOdbData : public WorkItem{
 public:
-  WorkItemOid(const git_oid *oid) : m_oid(oid) {};
-  WorkItemOid() = default;
-  virtual ~WorkItemOid() = default;
-  WorkItemOid(const WorkItemOid &other) = default;
-  WorkItemOid(WorkItemOid &&other) = default;
-  WorkItemOid& operator=(const WorkItemOid &other) = default;
-  WorkItemOid& operator=(WorkItemOid &&other) = default;
+  WorkItemOdbData(const git_oid &oid, OdbObjectsInfo *odbObjectsInfo)
+    : m_oid(oid), m_odbObjectsInfo(odbObjectsInfo) {}
+  ~WorkItemOdbData() = default;
+  WorkItemOdbData(const WorkItemOdbData &other) = delete;
+  WorkItemOdbData(WorkItemOdbData &&other) = delete;
+  WorkItemOdbData& operator=(const WorkItemOdbData &other) = delete;
+  WorkItemOdbData& operator=(WorkItemOdbData &&other) = delete;
   
-  const git_oid* GetOid() const { return m_oid; };
+  const git_oid& GetOid() const { return m_oid; }
+  OdbObjectsInfo* GetOdbObjectsInfo() { return m_odbObjectsInfo; }
 
 private:
-  const git_oid *m_oid {nullptr};
+  git_oid m_oid {};
+  OdbObjectsInfo *m_odbObjectsInfo {nullptr};
+};
+
+/**
+ * \struct MutexWorkerStoreOdbData
+ * mutex objects needed by WorkerStoreOdbData
+ */
+struct MutexWorkerStoreOdbData
+{
+  std::mutex mutexCommits {};
+  std::mutex mutexTrees {};
+  std::mutex mutexBlobs {};
+  std::mutex mutexTags {};
 };
 
 /**
@@ -210,7 +297,8 @@ private:
 class WorkerStoreOdbData : public IWorker
 {
 public:
-  WorkerStoreOdbData(const std::string &repoPath) : m_repoPath(repoPath) {};
+  WorkerStoreOdbData(const std::string &repoPath, MutexWorkerStoreOdbData *mutex)
+    : m_repoPath(repoPath), m_mutex(mutex) {}
   ~WorkerStoreOdbData();
   WorkerStoreOdbData(const WorkerStoreOdbData &other) = delete;
   WorkerStoreOdbData(WorkerStoreOdbData &&other) = delete;
@@ -218,355 +306,174 @@ public:
   WorkerStoreOdbData& operator=(WorkerStoreOdbData &&other) = delete;
 
   bool Initialize();
-  bool Execute(WorkItem *item);
+  bool Execute(std::unique_ptr<WorkItem> &&work);
 
 private:
+  OdbObjectsInfo::TreeDataAndStats thisTreeDataAndStats(git_tree *tree, size_t numEntries);
+
   std::string m_repoPath {};
   git_repository *m_repo {nullptr};
+  git_odb *m_odb {nullptr};
+  MutexWorkerStoreOdbData *m_mutex {nullptr};
 };
 
+/**
+ * WorkerStoreOdbData::~WorkerStoreOdbData
+ */
 WorkerStoreOdbData::~WorkerStoreOdbData() {
+  if (m_odb) {
+    git_odb_free(m_odb);
+  }
   if (m_repo) {
     git_repository_free(m_repo);
   }
 }
 
+/**
+ * WorkerStoreOdbData::Initialize
+ */
 bool WorkerStoreOdbData::Initialize() {
   if (m_repo != nullptr) // if already initialized
     return true;
 
   if (m_repoPath.empty())
     return false;
-  else
-    return (git_repository_open(&m_repo, m_repoPath.c_str()) == GIT_OK);
-}
-
-bool WorkerStoreOdbData::Execute(WorkItem *item)
-{
-  WorkItemOid *wi = static_cast<WorkItemOid *>(item);
-  git_object *target {nullptr};
-
-  int error = git_object_lookup(&target, m_repo, wi->GetOid(), GIT_OBJECT_ANY);
-  if (error != GIT_OK && error != GIT_ENOTFOUND && error != GIT_EMISMATCH) {
-    return false;
+  else {
+    if (git_repository_open(&m_repo, m_repoPath.c_str()) != GIT_OK)
+      return false;
+    
+    if (git_repository_odb(&m_odb, m_repo) != GIT_OK)
+      return false;
   }
-  git_object_free(target);
-
   return true;
 }
 
 /**
- * \struct ForEachOdbCbPayload
- * Payload for git_odb_foreach
+ * WorkerStoreOdbData::Execute
  */
-struct ForEachOdbCbPayload
+bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
 {
-  explicit ForEachOdbCbPayload(git_repository *aRepo, Statistics *aStatistics, CommitTree *aCommitTree, WorkerPool<WorkerStoreOdbData,WorkItemOid> *aWorkerPool)
-    : repo(aRepo), statistics(aStatistics), commitTree(aCommitTree), workerPool(aWorkerPool) {};
-  ~ForEachOdbCbPayload() = default;
-  ForEachOdbCbPayload(const Statistics &other) = delete;
-  ForEachOdbCbPayload(ForEachOdbCbPayload &&other) = delete;
-  ForEachOdbCbPayload& operator=(const ForEachOdbCbPayload &other) = delete;
-  ForEachOdbCbPayload& operator=(ForEachOdbCbPayload &&other) = delete;
+  std::unique_ptr<WorkItemOdbData> wi {static_cast<WorkItemOdbData*>(work.release())};
+  const git_oid &oid = wi->GetOid();
 
-  inline bool EmplaceUniqueObject(const std::string &oidStr) {
-    return uniqueObjects.emplace(oidStr).second;
+  // NOTE about PERFORMANCE (May 2021):
+  // git_object_lookup() is as expensive as git_odb_read().
+  // They give access to different information from the libgit2 API.
+  // Try to call only one of them if possible.
+
+  git_object *target {nullptr};
+  if (git_object_lookup(&target, m_repo, &oid, GIT_OBJECT_ANY) != GIT_OK) {
+    return false;
   }
 
-  inline bool EmplaceUniqueObject(const char* s, size_t n) {
-    return uniqueObjects.emplace(s, n).second;
-  }
-
-  git_repository *repo {nullptr};
-  Statistics *statistics {nullptr};
-  CommitTree *commitTree {nullptr};
-
-  git_odb *odb {nullptr};
-  std::unordered_set<std::string> uniqueObjects {};
-  std::unordered_map<std::string, TreeStatistics> treesStatistics {};
-  std::unordered_map<std::string, size_t> tagsDepth {};  // annotated tags depth (chain of annot. tags to reach a commit object)
-
-  WorkerPool<WorkerStoreOdbData,WorkItemOid> *workerPool {nullptr};
-};
-
-/**
- * calculateTreeStatistics.
- * 
- * Recursive function to calculate statistics of a tree object.
- * For better performance, make sure this function is only called once for each tree object in the object database.
- * Caller must make sure oid_tree belongs to an object of type GIT_OBJECT_TREE.
- * Returns GIT_OK on success; GIT_EUSER otherwise.
- */
-static int calculateTreeStatistics(const git_oid *oid_tree, ForEachOdbCbPayload *payload)
-{
-  // calculate statistics for properties "repositorySize" and "biggestObjects"
-  git_tree *tree {nullptr};
-  if (git_tree_lookup(&tree, payload->repo, oid_tree) != GIT_OK) {
-    return GIT_EUSER;
-  }
-
-  // do not count empty trees, like git's empty tree "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-  size_t numTE = git_tree_entrycount(tree);
-  if (numTE == 0) {
-    git_tree_free(tree);
-    return GIT_OK;
-  }
-
-  ++payload->statistics->repositorySize.trees.count;
-  payload->statistics->repositorySize.trees.entries += numTE;
-
-  git_odb_object *obj {nullptr};
-  if (git_odb_read(&obj, payload->odb, oid_tree) != GIT_OK) {
-    return GIT_EUSER;
-  }
-
-  size_t osize = git_odb_object_size(obj);
-  payload->statistics->repositorySize.trees.size += osize;
-  git_odb_object_free(obj);
-
-  payload->statistics->biggestObjects.trees.maxEntries = std::max(payload->statistics->biggestObjects.trees.maxEntries, numTE);
-
-  // calculate statistics for property "biggestCheckouts"
-  TreeStatistics treeStats {};
-  ++treeStats.numDirectories;
-  ++treeStats.maxPathDepth;
-
-  const git_tree_entry *te {nullptr};
-  const char *teName {nullptr};
-  size_t teNameLen {0};
-
-  for (size_t i = 0; i < numTE; ++i)
-  {
-    te = git_tree_entry_byindex(tree, i);
-    if (te != nullptr)
-    {
-      teName = git_tree_entry_name(te);
-      teNameLen = std::char_traits<char>::length(teName);
-      git_object_t otype = git_tree_entry_type(te);
-      switch (otype)
-      {
-        // count submodules
-        case GIT_OBJECT_COMMIT:
-          if (git_tree_entry_filemode(te) == GIT_FILEMODE_COMMIT) {
-            ++treeStats.numSubmodules;
-          }
-          break;
-
-        case GIT_OBJECT_BLOB:
-        {
-          ++treeStats.numFiles;
-          treeStats.maxPathLength = std::max(treeStats.maxPathLength, teNameLen);
-
-          git_blob *blob {nullptr};
-          const git_oid *te_oid = git_tree_entry_id(te);
-          if (git_blob_lookup(&blob, payload->repo, te_oid) != GIT_OK) {
-            git_tree_free(tree);
-            return GIT_EUSER;
-          }
-          treeStats.totalFileSize += git_blob_rawsize(blob);
-          git_blob_free(blob);
-
-          // count symbolic links
-          if (git_tree_entry_filemode(te) == GIT_FILEMODE_LINK) {
-            ++treeStats.numSymlinks;
-          }
-        }
-          break;
-          
-        case GIT_OBJECT_TREE:
-        {
-          // recursively calculate statistics of this subTree.
-          const git_oid *oid_subTree = git_tree_entry_id(te);
-          std::string oid_subTreeStr = std::string(reinterpret_cast<const char *>(oid_subTree->id), GIT_OID_RAWSZ);
-
-          // emplace (to mark it as analyzed) or retrieve the tree statistics already calculated.
-          if (payload->EmplaceUniqueObject(oid_subTreeStr) == true) {
-            if (calculateTreeStatistics(oid_subTree, payload) != GIT_OK) {
-              git_tree_free(tree);
-              return GIT_EUSER;
-            }
-          }
-
-          // update tree statistics with subtree statistics
-          std::unordered_map<std::string, TreeStatistics>::const_iterator citSubTreeStats = payload->treesStatistics.find(oid_subTreeStr);
-          if (citSubTreeStats != payload->treesStatistics.cend())
-          {
-            const TreeStatistics &subTreeStats = citSubTreeStats->second;
-
-            treeStats.numDirectories += subTreeStats.numDirectories;
-            treeStats.maxPathDepth = std::max(treeStats.maxPathDepth, subTreeStats.maxPathDepth + 1);
-            treeStats.maxPathLength = std::max(treeStats.maxPathLength, teNameLen + 1 + subTreeStats.maxPathLength);
-            treeStats.numFiles += subTreeStats.numFiles;
-            treeStats.totalFileSize += subTreeStats.totalFileSize;
-            treeStats.numSymlinks += subTreeStats.numSymlinks;
-            treeStats.numSubmodules += subTreeStats.numSubmodules;
-          }
-        }
-          break;
-          
-        default:
-          break;
-      }
-    }
-  }
-
-  git_tree_free(tree);
-
-  payload->treesStatistics.emplace(std::string(reinterpret_cast<const char *>(oid_tree->id), GIT_OID_RAWSZ), std::move(treeStats));
-  
-  return GIT_OK;
-}
-
-/**
- * calculateTagStatistics.
- * 
- * Recursive function to calculate statistics of a tag object.
- * For better performance, make sure this function is only called once for each tag object in the object database.
- * Caller must make sure oid_tree belongs to an object of type GIT_OBJECT_TAG.
- * Returns GIT_OK on success; GIT_EUSER otherwise.
- */
-static int calculateTagStatistics(const git_oid *oid_tag, ForEachOdbCbPayload *payload)
-{
-  git_tag *tag {nullptr};
-  if (git_tag_lookup(&tag, payload->repo, oid_tag) != GIT_OK) {
-    return GIT_EUSER;
-  }
-
-  // calculate statistics for properties "repositorySize" and "historyStructure"
-  ++payload->statistics->repositorySize.annotatedTags.count;
-
-  size_t tagDepth {1};
-
-	git_object_t target_type;
-  target_type = git_tag_target_type(tag);
-  
-  if (target_type == GIT_OBJECT_TAG)
-  {
-    const git_oid *oid_target = git_tag_target_id(tag);
-    std::string oid_targetStr = std::string(reinterpret_cast<const char *>(oid_target->id), GIT_OID_RAWSZ);
-    
-    // emplace (to mark it as analyzed) or retrieve the tag depth already calculated.
-    if (payload->EmplaceUniqueObject(oid_targetStr) == true) {
-      if (calculateTagStatistics(oid_target, payload) != GIT_OK) {
-        git_tag_free(tag);
-        return GIT_EUSER;
-      }
-    }
-
-    // update tag depth with target depth
-    std::unordered_map<std::string, size_t>::const_iterator citTargetDepth = payload->tagsDepth.find(oid_targetStr);
-    if (citTargetDepth != payload->tagsDepth.cend()) {
-      tagDepth += citTargetDepth->second;
-    }
-  }
-
-  git_tag_free(tag);
-
-  payload->tagsDepth.emplace(std::string(reinterpret_cast<const char *>(oid_tag->id), GIT_OID_RAWSZ), std::move(tagDepth));
-
-  return GIT_OK;
-}
-
-/**
- * workForEachOdbCb. Work given to a thread for the callback in git_odb_foreach.
- * Returns GIT_OK on success; GIT_EUSER otherwise
- */
-static int workForEachOdbCb(git_oid oid, ForEachOdbCbPayload *payload)
-{
-  // emplace (to mark it as analyzed) or return if object already analyzed
-  if (payload->EmplaceUniqueObject(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ) == false) {
-    return GIT_OK;
-  }
-
-  git_odb_object *obj {nullptr};
-  if (git_odb_read(&obj, payload->odb, &oid) != GIT_OK) {
-    return GIT_EUSER;
-  }
-
-  git_object_t otype = git_odb_object_type(obj);
-  size_t osize = git_odb_object_size(obj);
-  git_odb_object_free(obj);
-
-  switch (otype)
+  OdbObjectsInfo *odbObjectsInfo = wi->GetOdbObjectsInfo();
+  switch (git_object_type(target))
   {
     case GIT_OBJECT_COMMIT:
     {
-      // calculate statistics for properties "repositorySize" and "biggestObjects"
-      ++payload->statistics->repositorySize.commits.count;
-      payload->statistics->repositorySize.commits.size += osize;
+      git_commit *commit = (git_commit*)target;
+      // NOTE about PERFORMANCE (May 2021):
+      // calling git_odb_object_size() was slightly faster than calculating header size + message size + 1 with GK repo
 
-      payload->statistics->biggestObjects.commits.maxSize = std::max(payload->statistics->biggestObjects.commits.maxSize, osize);
-
-      git_commit *commit {nullptr};
-      if (git_commit_lookup(&commit, payload->repo, &oid) != GIT_OK) {
-        return GIT_EUSER;
+      // obtain size
+      git_odb_object *obj {nullptr};
+      if (git_odb_read(&obj, m_odb, &oid) != GIT_OK) {
+        git_object_free(target);
+        return false;
       }
-      
+      size_t size = git_odb_object_size(obj);
+      git_odb_object_free(obj);
+
+      // obtain commit info
+      std::string oidTree = std::string(reinterpret_cast<const char *>(git_commit_tree_id(commit)->id), GIT_OID_RAWSZ);
       size_t numParents  = git_commit_parentcount(commit);
-      payload->statistics->biggestObjects.commits.maxParents = std::max(payload->statistics->biggestObjects.commits.maxParents, numParents);
 
-      // add commit to tree, to build commit history
-      payload->commitTree->AddNode(&oid, commit, numParents);
-      
-      // calculate statistics of the tree pointed by this commit
-      const git_oid *oid_tree = git_commit_tree_id(commit);
-      std::string oid_treeStr = std::string(reinterpret_cast<const char *>(oid_tree->id), GIT_OID_RAWSZ);
-      std::unordered_map<std::string, TreeStatistics>::const_iterator citTreeStats {};
+      { // lock
+        std::lock_guard<std::mutex> lock(m_mutex->mutexCommits);
 
-      // emplace (to mark it as analyzed) or retrieve the tree statistics already calculated.
-      if (payload->EmplaceUniqueObject(oid_treeStr) == true) {
-        if (calculateTreeStatistics(oid_tree, payload) != GIT_OK) {
-          git_commit_free(commit);
-          return GIT_EUSER;
+        if (odbObjectsInfo->commitsInfo.info.emplace(std::make_pair(
+            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+            std::move(oidTree))).second == true) {
+          odbObjectsInfo->commitsInfo.totalSize += size;
+          odbObjectsInfo->commitsInfo.maxSize = std::max(odbObjectsInfo->commitsInfo.maxSize, size);
+          odbObjectsInfo->commitsInfo.maxParents = std::max(odbObjectsInfo->commitsInfo.maxParents, numParents);
+
+          odbObjectsInfo->commitsInfo.graph.AddNode(&oid, commit, static_cast<uint32_t>(numParents));
         }
-      }
-
-      git_commit_free(commit);
-      
-      // update statistics for property "biggestCheckouts"
-      citTreeStats = payload->treesStatistics.find(oid_treeStr);
-      if (citTreeStats != payload->treesStatistics.cend())
-      {
-        const TreeStatistics &treeStats = citTreeStats->second;
-        TreeStatistics &biggestCheckouts = payload->statistics->biggestCheckouts;
-
-        biggestCheckouts.numDirectories = std::max(biggestCheckouts.numDirectories, treeStats.numDirectories);
-        biggestCheckouts.maxPathDepth = std::max(biggestCheckouts.maxPathDepth, treeStats.maxPathDepth);
-        biggestCheckouts.maxPathLength = std::max(biggestCheckouts.maxPathLength, treeStats.maxPathLength);
-        biggestCheckouts.numFiles = std::max(biggestCheckouts.numFiles, treeStats.numFiles);
-        biggestCheckouts.totalFileSize = std::max(biggestCheckouts.totalFileSize, treeStats.totalFileSize);
-        biggestCheckouts.numSymlinks = std::max(biggestCheckouts.numSymlinks, treeStats.numSymlinks);
-        biggestCheckouts.numSubmodules = std::max(biggestCheckouts.numSubmodules, treeStats.numSubmodules);
       }
     }
       break;
 
     case GIT_OBJECT_TREE:
-      // calculate statistics for property "biggestCheckouts"
-      if (calculateTreeStatistics(&oid, payload) != GIT_OK) {
-        return GIT_EUSER;
+    {
+      git_tree *tree = (git_tree*)target;
+
+      // do not count empty trees, like git's empty tree "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+      size_t numEntries = git_tree_entrycount(tree);
+      if (numEntries == 0) {
+        git_object_free(target);
+        return true;
       }
+
+      // obtain size
+      git_odb_object *obj {nullptr};
+      if (git_odb_read(&obj, m_odb, &oid) != GIT_OK) {
+        git_object_free(target);
+        return false;
+      }
+      size_t size = git_odb_object_size(obj);
+      git_odb_object_free(obj);
+
+      // obtain tree data and calculate statistics for only this tree (not recursively)
+      OdbObjectsInfo::TreeDataAndStats treeDataAndStats = thisTreeDataAndStats(tree, numEntries);
+     
+      { // lock
+        std::lock_guard<std::mutex> lock(m_mutex->mutexTrees);
+
+        if (odbObjectsInfo->treesInfo.info.emplace(std::make_pair(
+            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+            std::move(treeDataAndStats))).second == true) {
+          odbObjectsInfo->treesInfo.totalSize += size;
+          odbObjectsInfo->treesInfo.totalEntries += numEntries;
+          odbObjectsInfo->treesInfo.maxEntries = std::max(odbObjectsInfo->treesInfo.maxEntries, numEntries);
+        }
+      }
+    }
       break;
 
     case GIT_OBJECT_BLOB:
-      // calculate statistics for properties "repositorySize" and "biggestObjects"
-      ++payload->statistics->repositorySize.blobs.count;
-      payload->statistics->repositorySize.blobs.size += osize;
+    {
+      git_blob *blob = (git_blob*)target;
+      size_t size = git_blob_rawsize(blob);
 
-      payload->statistics->biggestObjects.blobs.maxSize = std::max(payload->statistics->biggestObjects.blobs.maxSize, osize);
+      { // lock
+        std::lock_guard<std::mutex> lock(m_mutex->mutexBlobs);
+
+        if (odbObjectsInfo->blobsInfo.info.emplace(std::make_pair(
+            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+            size)).second == true) {
+          odbObjectsInfo->blobsInfo.totalSize += size;
+          odbObjectsInfo->blobsInfo.maxSize = std::max(odbObjectsInfo->blobsInfo.maxSize, size);
+        }
+      }
+    }
       break;
 
     case GIT_OBJECT_TAG:
     {
-      // calculate statistics for property "repositorySize" and "historyStructure"
-      if (calculateTagStatistics(&oid, payload) != GIT_OK) {
-        return GIT_EUSER;
-      }
+      // obtain TagData
+      git_tag *tag = (git_tag*)target;
+      const git_oid *oid_target = git_tag_target_id(tag);
+      OdbObjectsInfo::TagData tagData {
+        std::string(reinterpret_cast<const char *>(oid_target->id), GIT_OID_RAWSZ),
+        git_tag_target_type(tag),
+        OdbObjectsInfo::TagData::kUnsetDepth};
 
-      // update maximum tag depth for property "historyStructure"
-      std::unordered_map<std::string, size_t>::const_iterator citTagDepth = payload->tagsDepth.find(std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ));
-      if (citTagDepth != payload->tagsDepth.cend()) {
-        payload->statistics->historyStructure.maxTagDepth = std::max(payload->statistics->historyStructure.maxTagDepth, citTagDepth->second);
+      { // lock
+        std::lock_guard<std::mutex> lock(m_mutex->mutexTags);
+        odbObjectsInfo->tagsInfo.info.emplace(std::make_pair(
+            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+            std::move(tagData)));
       }
     }
       break;
@@ -575,8 +482,104 @@ static int workForEachOdbCb(git_oid oid, ForEachOdbCbPayload *payload)
       break;
   }
 
-  return GIT_OK;
+  git_object_free(target);
+
+  return true;
 }
+
+/**
+ * WorkerStoreOdbData::thisTreeDataAndStats
+ * 
+ * Obtain tree data and calculate the part of this tree's statistics that each thread can do.
+ * 
+ * \param tree tree to get data from and calculate partial statistics of.
+ * \param numEntries number of entries of this tree.
+ * \return this tree's data and partial statistics.
+  */
+OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tree *tree, size_t numEntries)
+{
+  OdbObjectsInfo::TreeDataAndStats treeDataAndStats {};
+
+  const git_tree_entry *te {nullptr};
+  git_object_t te_type {GIT_OBJECT_INVALID};
+  const char *teName {nullptr};
+  size_t teNameLen {0};
+  const git_oid *te_oid {nullptr};
+
+  for (size_t i = 0; i < numEntries; ++i)
+  {
+    te = git_tree_entry_byindex(tree, i);
+    if (te == nullptr) {
+      continue;
+    }
+
+    te_type = git_tree_entry_type(te);
+
+    switch (te_type)
+    {
+      // count submodules
+      case GIT_OBJECT_COMMIT:
+        if (git_tree_entry_filemode(te) == GIT_FILEMODE_COMMIT) {
+          ++treeDataAndStats.stats.numSubmodules;
+        }
+        break;
+
+      case GIT_OBJECT_BLOB:
+      {
+        // count symbolic links, but don't add them as blob entries
+        if (git_tree_entry_filemode(te) == GIT_FILEMODE_LINK) {
+          ++treeDataAndStats.stats.numSymlinks;
+        }
+        else {
+          te_oid = git_tree_entry_id(te);
+          treeDataAndStats.entryBlobs.emplace_back(reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ);
+
+          ++treeDataAndStats.stats.numFiles;
+          teName = git_tree_entry_name(te);
+          teNameLen = std::char_traits<char>::length(teName);
+          treeDataAndStats.stats.maxPathLength = std::max(treeDataAndStats.stats.maxPathLength, teNameLen);
+        }
+      }
+        break;
+        
+      case GIT_OBJECT_TREE:
+      {
+        // We store tree's name lenght to compare in posterior stage, after threads work
+        teName = git_tree_entry_name(te);
+        teNameLen = std::char_traits<char>::length(teName);
+
+        te_oid = git_tree_entry_id(te);
+        treeDataAndStats.entryTreesNameLen.emplace_back(std::make_pair(
+          std::string(reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ),
+          teNameLen));
+      }
+        break;
+        
+      default:
+        break;
+    }
+  }
+
+  return treeDataAndStats;
+}
+
+/**
+ * \struct ForEachOdbCbPayload
+ * Payload for git_odb_foreach
+ */
+struct ForEachOdbCbPayload
+{
+  explicit ForEachOdbCbPayload(WorkerPool<WorkerStoreOdbData,WorkItemOdbData> *aWorkerPool, OdbObjectsInfo *aOdbObjectsInfo)
+    : workerPool(aWorkerPool), odbObjectsInfo(aOdbObjectsInfo) {}
+  ~ForEachOdbCbPayload() = default;
+  ForEachOdbCbPayload(const ForEachOdbCbPayload &other) = delete;
+  ForEachOdbCbPayload(ForEachOdbCbPayload &&other) = delete;
+  ForEachOdbCbPayload& operator=(const ForEachOdbCbPayload &other) = delete;
+  ForEachOdbCbPayload& operator=(ForEachOdbCbPayload &&other) = delete;
+
+  WorkerPool<WorkerStoreOdbData,WorkItemOdbData> *workerPool {nullptr};
+  OdbObjectsInfo *odbObjectsInfo {nullptr};
+};
 
 /**
  * forEachOdbCb. Callback for git_odb_foreach.
@@ -586,10 +589,8 @@ static int forEachOdbCb(const git_oid *oid, void *payloadToCast)
 {
   ForEachOdbCbPayload *payload = static_cast<ForEachOdbCbPayload *>(payloadToCast);
 
-  // Using threads, we need to pass a copy of git_oid to 'workForEachOdbCb'
-  //payload->cbResults.emplace_back(payload->workerPool->enqueue(workForEachOdbCb, *oid, payload));
-
-  if (!payload->workerPool->InsertWork(oid))
+  // Must insert copies of oid, since the pointers might not survive until worker thread picks it up
+  if (!payload->workerPool->InsertWork(std::make_unique<WorkItemOdbData>(*oid, payload->odbObjectsInfo)))
     return GIT_EUSER;
 
   return GIT_OK;
@@ -603,10 +604,12 @@ class RepoAnalysis
 {
 public:
   explicit RepoAnalysis(git_repository *repo)
-    // : m_repo(repo) {};
-    : m_repo(repo) {  timeCreation = std::chrono::system_clock::now(); };
-  // ~RepoAnalysis() = default;
-  ~RepoAnalysis() { timeDestruction = std::chrono::system_clock::now(); printTimes(); };
+    : m_repo(repo) {}
+    // DEBUG TIMES
+    // : m_repo(repo) {  timeCreation = std::chrono::system_clock::now(); }
+  ~RepoAnalysis() = default;
+  // DEBUG TIMES
+  // ~RepoAnalysis() { timeDestruction = std::chrono::system_clock::now(); printTimes(); }
   RepoAnalysis(const RepoAnalysis &other) = delete;
   RepoAnalysis(RepoAnalysis &&other) = delete;
   RepoAnalysis& operator=(const RepoAnalysis &other) = delete;
@@ -616,35 +619,36 @@ public:
   v8::Local<v8::Object> StatisticsToJS() const;
 
 public:
-  std::chrono::time_point<std::chrono::system_clock> timeCreation {};
-  std::chrono::time_point<std::chrono::system_clock> timeStartOdbForEach {};
-  std::chrono::time_point<std::chrono::system_clock> timeEndOdbForEach {};
-  std::chrono::time_point<std::chrono::system_clock> timeEndCalculateMaxDepth {};
-  std::chrono::time_point<std::chrono::system_clock> timeEndAnalyzeReferences {};  
-  std::chrono::time_point<std::chrono::system_clock> timeDestruction {};
+  // DEBUG TIMES
+  // std::chrono::time_point<std::chrono::system_clock> timeCreation {};
+  // std::chrono::time_point<std::chrono::system_clock> timeStartOdbForEach {};
+  // std::chrono::time_point<std::chrono::system_clock> timeEndOdbForEach {};
+  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateBiggestCheckouts {};
+  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateMaxTagDepth {};
+  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateMaxDepth {};
+  // std::chrono::time_point<std::chrono::system_clock> timeEndAnalyzeReferences {};  
+  // std::chrono::time_point<std::chrono::system_clock> timeDestruction {};
 
 private:
   int analyzeObjects();
+  int calculateBiggestCheckouts();
+  OdbObjectsInfo::iterTreeInfo calculateTreeStatistics(const std::string &oidTree);
+  int calculateMaxTagDepth();
+  OdbObjectsInfo::iterTagInfo calculateTagDepth(const std::string &oidTag);
   int analyzeReferences();
+  void fillOutStatistics();
   v8::Local<v8::Object> repositorySizeToJS() const;
   v8::Local<v8::Object> biggestObjectsToJS() const;
   v8::Local<v8::Object> historyStructureToJS() const;
   v8::Local<v8::Object> biggestCheckoutsToJS() const;
 
-  void printTimes() {
-    std::cout<< "duration ms (creation -> destruction): " << chrono::duration_cast<chrono::milliseconds>(timeDestruction - timeCreation).count() << std::endl;
-    std::cout<< "duration ms (creation -> timeStartOdbForEach): " << chrono::duration_cast<chrono::milliseconds>(timeStartOdbForEach - timeCreation).count() << std::endl;
-    std::cout<< "duration ms (timeStartOdbForEach -> timeEndOdbForEach): " << chrono::duration_cast<chrono::milliseconds>(timeEndOdbForEach - timeStartOdbForEach).count() << std::endl;
-    std::cout<< "duration ms (timeEndOdbForEach -> timeEndCalculateMaxDepth): " << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateMaxDepth - timeEndOdbForEach).count() << std::endl;
-    std::cout<< "duration ms (timeEndCalculateMaxDepth -> timeEndAnalyzeReferences): " << chrono::duration_cast<chrono::milliseconds>(timeEndAnalyzeReferences - timeEndCalculateMaxDepth).count() << std::endl;
-  }
+  // DEBUG TIMES
+  // void printTimes() const;
 
   git_repository *m_repo {nullptr};
   Statistics m_statistics {};
-  // Tree to be build while reading the object database.
-  // Will be used to obtain maximum history depth.
-  CommitTree m_commitTree {};
-  WorkerPool<WorkerStoreOdbData,WorkItemOid> m_workerPool {};
+  // odb objects info to build while reading the object database by each thread
+  OdbObjectsInfo m_odbObjectsInfo {};
 };
 
 /**
@@ -661,8 +665,11 @@ int RepoAnalysis::Analyze()
     return errorCode;
   }
 
-  timeEndAnalyzeReferences = std::chrono::system_clock::now();
+  // DEBUG TIMES
+  // timeEndAnalyzeReferences = std::chrono::system_clock::now();
   
+  fillOutStatistics();
+
   return errorCode;
 }
 
@@ -673,40 +680,219 @@ int RepoAnalysis::Analyze()
 int RepoAnalysis::analyzeObjects()
 {
   int errorCode {GIT_OK};
-  std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
 
+  // initialize workers for the worker pool
   std::string repoPath = git_repository_path(m_repo);
   unsigned int numThreads = std::max(std::thread::hardware_concurrency(), static_cast<unsigned int>(4));
-  for (int i=0; i<numThreads; ++i) {
-    workers.emplace_back(std::make_shared<WorkerStoreOdbData>(repoPath));
-  }
-  m_workerPool.Init(workers);
 
-  ForEachOdbCbPayload payload {m_repo, &m_statistics, &m_commitTree, &m_workerPool};
-  if ((errorCode = git_repository_odb(&payload.odb, m_repo)) != GIT_OK) {
+  MutexWorkerStoreOdbData mutex {};
+  std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
+  for (unsigned int i=0; i<numThreads; ++i) {
+    workers.emplace_back(std::make_shared<WorkerStoreOdbData>(repoPath, &mutex));
+  }
+
+  // initialize worker pool
+  WorkerPool<WorkerStoreOdbData,WorkItemOdbData> workerPool {};  
+  workerPool.Init(workers);
+
+  // gets the objects database
+  ForEachOdbCbPayload payload {&workerPool, &m_odbObjectsInfo};
+  git_odb *odb {nullptr};
+  if ((errorCode = git_repository_odb(&odb, m_repo)) != GIT_OK) {
     return errorCode;
   }
 
-  timeStartOdbForEach = std::chrono::system_clock::now();
+  // DEBUG TIMES
+  // timeStartOdbForEach = std::chrono::system_clock::now();
 
   // analyze all the objects and build commit history tree
-  if ((errorCode = git_odb_foreach(payload.odb, forEachOdbCb, &payload)) != GIT_OK) {
+  if ((errorCode = git_odb_foreach(odb, forEachOdbCb, &payload)) != GIT_OK) {
+    git_odb_free(odb);
     return errorCode;
   }
 
   // wait for the threads to finish analyzing each object from the database and shutdown the work pool
-  m_workerPool.Shutdown();
+  workerPool.Shutdown();
 
-  timeEndOdbForEach = std::chrono::system_clock::now();
+  // DEBUG TIMES
+  // timeEndOdbForEach = std::chrono::system_clock::now();
 
-  git_odb_free(payload.odb);
+  git_odb_free(odb);
+
+  if ((errorCode = calculateBiggestCheckouts()) != GIT_OK) {
+    return errorCode;
+  }
+
+  // DEBUG TIMES
+  // timeEndCalculateBiggestCheckouts = std::chrono::system_clock::now();
+
+  if ((errorCode = calculateMaxTagDepth()) != GIT_OK) {
+    return errorCode;
+  }
+
+  // DEBUG TIMES
+  // timeEndCalculateMaxTagDepth = std::chrono::system_clock::now();
 
   // calculate max commit history depth
-  m_statistics.historyStructure.maxDepth = m_commitTree.CalculateMaxDepth();
+  m_statistics.historyStructure.maxDepth = m_odbObjectsInfo.commitsInfo.graph.CalculateMaxDepth();
 
-  timeEndCalculateMaxDepth = std::chrono::system_clock::now();
+  // DEBUG TIMES
+  // timeEndCalculateMaxDepth = std::chrono::system_clock::now();
 
   return errorCode;
+}
+
+/**
+ * RepoAnalysis::calculateBiggestCheckouts
+ * 
+ * Once threads have collected data from objects, biggest checkouts can be calculated.
+ * Threads have already collected partial non-recursive tree statistics.
+ */
+int RepoAnalysis::calculateBiggestCheckouts()
+{
+  for (auto &commitInfo : m_odbObjectsInfo.commitsInfo.info)
+  {
+    // calculate this commit's data
+    const std::string &commitOidTree = commitInfo.second;
+
+    OdbObjectsInfo::iterTreeInfo itTreeInfo {};
+    if ((itTreeInfo = calculateTreeStatistics(commitOidTree)) == m_odbObjectsInfo.treesInfo.info.end())
+      return GIT_EUSER;
+
+    // update biggestCheckouts data
+    OdbObjectsInfo::TreeDataAndStats &treeDataAndStats = itTreeInfo->second;
+    m_statistics.biggestCheckouts.numDirectories = std::max(
+      m_statistics.biggestCheckouts.numDirectories, treeDataAndStats.stats.numDirectories);
+    m_statistics.biggestCheckouts.totalFileSize = std::max(
+      m_statistics.biggestCheckouts.totalFileSize, treeDataAndStats.stats.totalFileSize);
+    m_statistics.biggestCheckouts.maxPathDepth = std::max(
+      m_statistics.biggestCheckouts.maxPathDepth, treeDataAndStats.stats.maxPathDepth);
+    m_statistics.biggestCheckouts.numFiles = std::max(
+      m_statistics.biggestCheckouts.numFiles, treeDataAndStats.stats.numFiles);
+    m_statistics.biggestCheckouts.maxPathLength = std::max(
+      m_statistics.biggestCheckouts.maxPathLength, treeDataAndStats.stats.maxPathLength);
+    m_statistics.biggestCheckouts.numSymlinks = std::max(
+      m_statistics.biggestCheckouts.numSymlinks, treeDataAndStats.stats.numSymlinks);
+    m_statistics.biggestCheckouts.numSubmodules = std::max(
+      m_statistics.biggestCheckouts.numSubmodules, treeDataAndStats.stats.numSubmodules);
+  }
+
+  return GIT_OK;
+}
+
+/**
+ * RepoAnalysis::calculateTreeStatistics
+ * 
+ * Calculates tree statistics recursively, considering individual tree's statistics
+ * have already been calculated.
+ * Returns an iterator to the tree info container, or to end of the tree info container if something went wrong.
+ */
+OdbObjectsInfo::iterTreeInfo RepoAnalysis::calculateTreeStatistics(const std::string &oidTree)
+{
+  OdbObjectsInfo::iterTreeInfo itTreeInfo = m_odbObjectsInfo.treesInfo.info.find(oidTree);
+  if (itTreeInfo == m_odbObjectsInfo.treesInfo.info.end())
+    return itTreeInfo;
+
+  OdbObjectsInfo::TreeDataAndStats &treeDataAndStats = itTreeInfo->second;
+
+  // prune recursivity
+  if (treeDataAndStats.statsDone)
+    return itTreeInfo;
+
+  ++treeDataAndStats.stats.numDirectories;
+  ++treeDataAndStats.stats.maxPathDepth;
+  // the following partial statistics have also been calculated in previous stage with threads:
+  // - treeDataAndStats.stats.numFiles
+  // - treeDataAndStats.stats.maxPathLength
+  // - treeDataAndStats.stats.numSymLinks
+  // - treeDataAndStats.stats.numSubmodules
+
+  // totalFileSize
+  OdbObjectsInfo::iterBlobInfo itBlobInfo {};
+  for (auto &oidBlob : treeDataAndStats.entryBlobs)
+  {
+    if ((itBlobInfo = m_odbObjectsInfo.blobsInfo.info.find(oidBlob)) == m_odbObjectsInfo.blobsInfo.info.end())
+      return m_odbObjectsInfo.treesInfo.info.end(); // to let the caller know that something went wrong
+
+    treeDataAndStats.stats.totalFileSize += itBlobInfo->second;
+  }
+
+  // recursively into subtrees
+  for (const auto &subTreeNameLen : treeDataAndStats.entryTreesNameLen)
+  {
+    OdbObjectsInfo::iterTreeInfo itSubTreeInfo {};
+    if ((itSubTreeInfo = calculateTreeStatistics(subTreeNameLen.first)) == m_odbObjectsInfo.treesInfo.info.end())
+      return itSubTreeInfo;
+
+    OdbObjectsInfo::TreeDataAndStats &subTreeDataAndStats = itSubTreeInfo->second;
+    treeDataAndStats.stats.numDirectories += subTreeDataAndStats.stats.numDirectories;
+    treeDataAndStats.stats.maxPathDepth = std::max(
+      treeDataAndStats.stats.maxPathDepth, subTreeDataAndStats.stats.maxPathDepth + 1);
+    treeDataAndStats.stats.maxPathLength = std::max(
+      treeDataAndStats.stats.maxPathLength,
+      subTreeNameLen.second + 1 + subTreeDataAndStats.stats.maxPathLength);
+    treeDataAndStats.stats.numFiles += subTreeDataAndStats.stats.numFiles;
+    treeDataAndStats.stats.totalFileSize += subTreeDataAndStats.stats.totalFileSize;
+    treeDataAndStats.stats.numSymlinks += subTreeDataAndStats.stats.numSymlinks;
+    treeDataAndStats.stats.numSubmodules += subTreeDataAndStats.stats.numSubmodules;
+  }
+
+  treeDataAndStats.statsDone = true;
+
+  return itTreeInfo;
+}
+
+/**
+ * RepoAnalysis::calculateMaxTagDepth
+ */
+int RepoAnalysis::calculateMaxTagDepth()
+{
+  for (auto &tagInfo : m_odbObjectsInfo.tagsInfo.info)
+  {
+    OdbObjectsInfo::iterTagInfo itTagInfo {};
+    if ((itTagInfo = calculateTagDepth(tagInfo.first)) == m_odbObjectsInfo.tagsInfo.info.end())
+      return GIT_EUSER;
+
+    // update maxTagDepth
+    OdbObjectsInfo::TagData &tagData = itTagInfo->second;
+    m_statistics.historyStructure.maxTagDepth = std::max(
+      m_statistics.historyStructure.maxTagDepth, tagData.depth);
+  }
+
+  return GIT_OK;
+}
+
+/**
+ * RepoAnalysis::calculateTagDepth
+ * 
+ * Calculates recursively the tag depth of the oidTag passed as a parameter.
+ * Returns an iterator to the tag info container, or to end of the tag info container if something went wrong.
+ */
+OdbObjectsInfo::iterTagInfo RepoAnalysis::calculateTagDepth(const std::string &oidTag)
+{
+  OdbObjectsInfo::iterTagInfo itTagInfo = m_odbObjectsInfo.tagsInfo.info.find(oidTag);
+  if (itTagInfo == m_odbObjectsInfo.tagsInfo.info.end())
+    return itTagInfo;
+
+  OdbObjectsInfo::TagData &tagData = itTagInfo->second;
+
+  // prune recursivity
+  if (tagData.depth != OdbObjectsInfo::TagData::kUnsetDepth)
+    return itTagInfo;
+
+  ++tagData.depth;
+
+  if (tagData.typeTarget == GIT_OBJECT_TAG)
+  {
+    OdbObjectsInfo::iterTagInfo itChainedTagInfo {};
+    if ((itChainedTagInfo = calculateTagDepth(tagData.oidTarget)) == m_odbObjectsInfo.tagsInfo.info.end())
+      return itChainedTagInfo;
+
+    OdbObjectsInfo::TagData &chainedTagData = itChainedTagInfo->second;
+    tagData.depth += chainedTagData.depth;
+  }
+
+  return itTagInfo;
 }
 
 /**
@@ -724,6 +910,28 @@ int RepoAnalysis::analyzeReferences()
   git_strarray_dispose(&ref_list);
 
   return errorCode;
+}
+
+/**
+ * RepoAnalysis::fillOutStatistics
+ */
+void RepoAnalysis::fillOutStatistics()
+{
+  m_statistics.repositorySize.commits.count = m_odbObjectsInfo.commitsInfo.info.size();
+  m_statistics.repositorySize.commits.size = m_odbObjectsInfo.commitsInfo.totalSize;
+  m_statistics.repositorySize.trees.count = m_odbObjectsInfo.treesInfo.info.size();
+  m_statistics.repositorySize.trees.size = m_odbObjectsInfo.treesInfo.totalSize;
+  m_statistics.repositorySize.trees.entries = m_odbObjectsInfo.treesInfo.totalEntries;
+  m_statistics.repositorySize.blobs.count = m_odbObjectsInfo.blobsInfo.info.size();
+  m_statistics.repositorySize.blobs.size = m_odbObjectsInfo.blobsInfo.totalSize;
+  m_statistics.repositorySize.annotatedTags.count = m_odbObjectsInfo.tagsInfo.info.size();
+
+  m_statistics.biggestObjects.commits.maxSize = m_odbObjectsInfo.commitsInfo.maxSize;
+  m_statistics.biggestObjects.commits.maxParents = m_odbObjectsInfo.commitsInfo.maxParents;
+  m_statistics.biggestObjects.trees.maxEntries = m_odbObjectsInfo.treesInfo.maxEntries;
+  m_statistics.biggestObjects.blobs.maxSize = m_odbObjectsInfo.blobsInfo.maxSize;
+
+  // m_statistics.biggestCheckouts have already been filled out while running
 }
 
 /**
@@ -834,6 +1042,31 @@ v8::Local<v8::Object> RepoAnalysis::biggestCheckoutsToJS() const
 
   return result;
 }
+
+// DEBUG TIMES
+// void RepoAnalysis::printTimes() const {
+//   std::cout<< "duration ms (creation -> destruction): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeDestruction - timeCreation).count()
+//     << std::endl;
+//   std::cout<< "duration ms (creation -> timeStartOdbForEach): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeStartOdbForEach - timeCreation).count()
+//     << std::endl;
+//   std::cout<< "duration ms (timeStartOdbForEach -> timeEndOdbForEach): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeEndOdbForEach - timeStartOdbForEach).count()
+//     << std::endl;
+//   std::cout<< "duration ms (timeEndOdbForEach -> timeEndCalculateBiggestCheckouts): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateBiggestCheckouts - timeEndOdbForEach).count()
+//     << std::endl;
+//   std::cout<< "duration ms (timeEndCalculateBiggestCheckouts -> timeEndCalculateMaxTagDepth): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateMaxTagDepth - timeEndCalculateBiggestCheckouts).count()
+//     << std::endl;
+//   std::cout<< "duration ms (timeEndCalculateMaxTagDepth -> timeEndCalculateMaxDepth): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateMaxDepth - timeEndCalculateMaxTagDepth).count()
+//     << std::endl;
+//   std::cout<< "duration ms (timeEndCalculateMaxDepth -> timeEndAnalyzeReferences): "
+//     << chrono::duration_cast<chrono::milliseconds>(timeEndAnalyzeReferences - timeEndCalculateMaxDepth).count()
+//     << std::endl;
+// }
 
 NAN_METHOD(GitRepository::Statistics)
 {
