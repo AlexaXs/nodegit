@@ -3,6 +3,10 @@
 #include <nan.h>
 #include <string>
 #include <utility>
+#include <algorithm>
+#include <memory>
+#include <unordered_set>
+#include <set>
 #include <sstream>
 
 #include "async_baton.h"
