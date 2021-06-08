@@ -5,6 +5,7 @@
 #include <utility>
 #include <algorithm>
 #include <set>
+#include <unordered_set>
 #include <sstream>
 
 #include "async_baton.h"

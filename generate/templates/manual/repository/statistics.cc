@@ -3,8 +3,7 @@
  */
 struct CommitsGraphNode
 {
-  CommitsGraphNode(uint32_t aParentsLeft)
-    : parentsLeft(aParentsLeft) {}
+  CommitsGraphNode(uint32_t aParentsLeft) : parentsLeft(aParentsLeft) {}
   CommitsGraphNode() = default;
   ~CommitsGraphNode() = default;
   CommitsGraphNode(const CommitsGraphNode &other) = delete;
@@ -31,11 +30,11 @@ public:
 
   using CommitsGraphMap = std::unordered_map<std::string, std::unique_ptr<CommitsGraphNode>>;
 
-  void AddNode(const git_oid *oid, const git_commit *commit, uint32_t numParents);
+  void AddNode(const std::string &oidStr, const std::vector<std::string> &parents, uint32_t numParents);
   uint32_t CalculateMaxDepth();
 
 private:
-  void addParentNode(const git_oid *oid, CommitsGraphNode *child);
+  void addParentNode(const std::string &oidParentStr, CommitsGraphNode *child);
 
   CommitsGraphMap m_mapOidNode {};
   std::vector<CommitsGraphNode *> m_roots {};
@@ -44,31 +43,31 @@ private:
 /**
  * CommitsGraph::AddNode
  * 
- * \param oid git_oid of the commit object to add.
- * \param node git_commit object source from which to extract information for the tree node.
+ * \param oidStr oid of the commit object to add.
+ * \param parents oids of the commit's parents.
  * \param numParents Number of parents of the commit object.
  */
-void CommitsGraph::AddNode(const git_oid *oid, const git_commit *commit, uint32_t numParents)
+void CommitsGraph::AddNode(const std::string &oidStr, const std::vector<std::string> &parents,
+  uint32_t numParents)
 {
-  auto nodePair = m_mapOidNode.emplace(std::make_pair(
-    std::string(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ),
-    std::make_unique<CommitsGraphNode>(numParents)));
+  auto emplacePair = m_mapOidNode.emplace(std::make_pair(
+    oidStr, std::make_unique<CommitsGraphNode>(numParents)));
 
-  CommitsGraphMap::iterator itNode = nodePair.first;
+  CommitsGraphMap::iterator itNode = emplacePair.first;
 
   // if this node already added by a child, update its parentsLeft
-  if (nodePair.second == false) {
+  if (emplacePair.second == false) {
     itNode->second.get()->parentsLeft = numParents;
   }
 
-  // set root
+  // set roots
   if (numParents == 0) {
     m_roots.emplace_back(itNode->second.get());
   }
 
   // add parents
   for (unsigned int i = 0; i < numParents; ++i) {
-    addParentNode(git_commit_parent_id(commit, i), itNode->second.get());
+    addParentNode(parents.at(i), itNode->second.get());
   }
 }
 
@@ -78,9 +77,11 @@ void CommitsGraph::AddNode(const git_oid *oid, const git_commit *commit, uint32_
  * 
  * Uses iterative algorithm to count levels.
  * Considers multiple initial commits.
- * Considers that children of one level can have multiple parents, hence we insert unique children at each level.
- * Considers that same child can be in different levels. Here to prevent counting the same child multiple times,
- * we only add a child when the last parent (parentsLeft) inserts it. This is actually what makes the algorithm fast.
+ * Considers that children of one level can have multiple parents, hence we insert unique children
+ * at each level.
+ * Considers that same child can be in different levels. Here to prevent counting the same child
+ * multiple times, we only add a child when the last parent (parentsLeft) inserts it. This is
+ * actually what makes the algorithm fast.
  * Recursive algorithm avoided to prevent stack overflow in case of excessive levels in the tree.
  */
 uint32_t CommitsGraph::CalculateMaxDepth()
@@ -89,7 +90,7 @@ uint32_t CommitsGraph::CalculateMaxDepth()
   std::set<CommitsGraphNode *> parents {};
   std::set<CommitsGraphNode *> children {};
 
-  // initial commmits
+  // start from the root commmits
   for (CommitsGraphNode *root : m_roots) {
     children.insert(root);
   }
@@ -114,14 +115,13 @@ uint32_t CommitsGraph::CalculateMaxDepth()
 /**
  * CommitsGraph::addParentNode
  * 
- * \param oid git_oid of the commit object to add.
- * \param child Child of the parent node being added.
+ * \param oidParentStr oid of the parent commit to add.
+ * \param child Child of the parent commit being added.
  */
-void CommitsGraph::addParentNode(const git_oid *oid_parent, CommitsGraphNode *child)
+void CommitsGraph::addParentNode(const std::string &oidParentStr, CommitsGraphNode *child)
 {
   CommitsGraphMap::iterator itParentNode = m_mapOidNode.emplace(std::make_pair(
-    std::string(reinterpret_cast<const char *>(oid_parent->id), GIT_OID_RAWSZ),
-    std::make_unique<CommitsGraphNode>())).first;
+    oidParentStr, std::make_unique<CommitsGraphNode>())).first;
 
   // add child to parent
   itParentNode->second->children.emplace_back(child);
@@ -136,7 +136,7 @@ struct TreeStatistics
   TreeStatistics() = default;
   ~TreeStatistics() = default;
   TreeStatistics(const TreeStatistics &other) = delete;
-  TreeStatistics(TreeStatistics &&other) = default;                 // no copies, just move
+  TreeStatistics(TreeStatistics &&other) = default;
   TreeStatistics& operator=(const TreeStatistics &other) = delete;
   TreeStatistics& operator=(TreeStatistics &&other) = default;
 
@@ -151,7 +151,7 @@ struct TreeStatistics
 
 /**
  * \struct Statistics
- * Stores statistics of the analyzed repository
+ * Stores statistics of the analyzed repository.
  */
 struct Statistics
 {
@@ -185,109 +185,152 @@ struct Statistics
 };
 
 /**
- * \struct OdbObjectsInfo
+ * \struct OdbObjectsData
+ * Structure to store, for each object read from the repository:
+ * - its information (size, parents for a commit, etc.)
+ * - different data needed to obtain the resulting statistics
  */
-struct OdbObjectsInfo
+struct OdbObjectsData
 {
-  struct TreeDataAndStats {
-    TreeDataAndStats() = default;
-    ~TreeDataAndStats() = default;
-    TreeDataAndStats(const TreeDataAndStats &other) = delete;
-    TreeDataAndStats(TreeDataAndStats &&other) = default;
-    TreeDataAndStats& operator=(const TreeDataAndStats &other) = delete;
-    TreeDataAndStats& operator=(TreeDataAndStats &&other) = default;
+  static constexpr uint32_t kUnreachable = 0;
 
+  struct CommitInfo {
+    CommitInfo() = default;
+    ~CommitInfo() = default;
+    CommitInfo(const CommitInfo &other) = delete;
+    CommitInfo(CommitInfo &&other) = default;
+    CommitInfo& operator=(const CommitInfo &other) = delete;
+    CommitInfo& operator=(CommitInfo &&other) = default;
+
+    std::string oidTree {};
+    size_t size {0};
+    std::vector<std::string> parents {};
+    // number of sources from which a commit can be reached:
+    // a child commit, a tag, or a direct git reference
+    uint32_t reachability {kUnreachable};
+  };
+
+  struct TreeInfoAndStats {
+    TreeInfoAndStats() = default;
+    ~TreeInfoAndStats() = default;
+    TreeInfoAndStats(const TreeInfoAndStats &other) = delete;
+    TreeInfoAndStats(TreeInfoAndStats &&other) = default;
+    TreeInfoAndStats& operator=(const TreeInfoAndStats &other) = delete;
+    TreeInfoAndStats& operator=(TreeInfoAndStats &&other) = default;
+
+    size_t size {0};
+    size_t numEntries {0};
     std::vector<std::string> entryBlobs {};
     std::vector< std::pair<std::string, size_t> > entryTreesNameLen {};
+    // number of sources from which a tree can be reached:
+    // a commit, another tree's entry, or a tag
+    uint32_t reachability {kUnreachable};
     TreeStatistics stats {};
     bool statsDone {false};
   };
 
-  struct TagData {
+  struct BlobInfo {
+    BlobInfo() = default;
+    ~BlobInfo() = default;
+    BlobInfo(const BlobInfo &other) = delete;
+    BlobInfo(BlobInfo &&other) = default;
+    BlobInfo& operator=(const BlobInfo &other) = delete;
+    BlobInfo& operator=(BlobInfo &&other) = default;
+
+    size_t size {0};
+    // number of sources from which a blob can be reached:
+    // a tree's entry, or a tag
+    uint32_t reachability {kUnreachable};
+  };
+
+  struct TagInfo {
     static constexpr uint32_t kUnsetDepth = 0;
 
-    TagData() = default;
-    ~TagData() = default;
-    TagData(const TagData &other) = delete;
-    TagData(TagData &&other) = default;
-    TagData& operator=(const TagData &other) = delete;
-    TagData& operator=(TagData &&other) = default;
+    TagInfo() = default;
+    ~TagInfo() = default;
+    TagInfo(const TagInfo &other) = delete;
+    TagInfo(TagInfo &&other) = default;
+    TagInfo& operator=(const TagInfo &other) = delete;
+    TagInfo& operator=(TagInfo &&other) = default;
 
     std::string oidTarget {};
     git_object_t typeTarget {GIT_OBJECT_INVALID};
     uint32_t depth {kUnsetDepth};
+    // number of sources from which a tag can be reached:
+    // a reference, or another tag
+    uint32_t reachability {kUnreachable};
   };
 
-  OdbObjectsInfo() = default;
-  ~OdbObjectsInfo() = default;
-  OdbObjectsInfo(const OdbObjectsInfo &other) = delete;
-  OdbObjectsInfo(OdbObjectsInfo &&other) = delete;
-  OdbObjectsInfo& operator=(const OdbObjectsInfo &other) = delete;
-  OdbObjectsInfo& operator=(OdbObjectsInfo &&other) = delete;
+  OdbObjectsData() = default;
+  ~OdbObjectsData() = default;
+  OdbObjectsData(const OdbObjectsData &other) = delete;
+  OdbObjectsData(OdbObjectsData &&other) = delete;
+  OdbObjectsData& operator=(const OdbObjectsData &other) = delete;
+  OdbObjectsData& operator=(OdbObjectsData &&other) = delete;
 
   struct {
-    std::unordered_map<std::string, std::string> info {};
-    // tree of commits (graph) to be build while reading the object database, to obtain maximum history depth
+    std::unordered_map<std::string, CommitInfo> info {};
+    std::unordered_set<std::string> unreachables {};
+    // tree of commits (graph) to be built while reading the object database,
+    // in order to calculate the maximum history depth
     CommitsGraph graph {};
     size_t totalSize {0};
     size_t maxSize {0};
     size_t maxParents {0};
-  } commitsInfo {};
+  } commits {};
 
   struct {
-    std::unordered_map<std::string, TreeDataAndStats> info;
+    std::unordered_map<std::string, TreeInfoAndStats> info;
+    std::unordered_set<std::string> unreachables {};
     size_t totalSize {0};
     size_t totalEntries {0};
     size_t maxEntries {0};
-  } treesInfo {};
+  } trees {};
 
   struct {
-    std::unordered_map<std::string, size_t> info {};
+    std::unordered_map<std::string, BlobInfo> info {};
+    std::unordered_set<std::string> unreachables {};
     size_t totalSize {0};
     size_t maxSize {0};
-  } blobsInfo {};
+  } blobs {};
 
   struct {
-    std::unordered_map<std::string, TagData> info;
-  } tagsInfo {};
+    std::unordered_map<std::string, TagInfo> info;
+    std::unordered_set<std::string> unreachables {};
+  } tags {};
 
-  using iterTreeInfo = std::unordered_map<std::string, TreeDataAndStats>::iterator;
-  using iterBlobInfo = std::unordered_map<std::string, size_t>::iterator;
-  using iterTagInfo = std::unordered_map<std::string, TagData>::iterator;
+  struct {
+    std::mutex commits {};
+    std::mutex trees {};
+    std::mutex blobs {};
+    std::mutex tags {};
+  } infoMutex;
+
+  using iterCommitInfo = std::unordered_map<std::string, CommitInfo>::iterator;
+  using iterUnreachable = std::unordered_set<std::string>::iterator;
+  using iterTreeInfo = std::unordered_map<std::string, TreeInfoAndStats>::iterator;
+  using iterBlobInfo = std::unordered_map<std::string, BlobInfo>::iterator;
+  using iterTagInfo = std::unordered_map<std::string, TagInfo>::iterator;
 };
 
 /**
- * \class WorkItemOdbData
+ * \class WorkItemOid
  * WorkItem storing odb oids for the WorkPool.
  */
-class WorkItemOdbData : public WorkItem{
+class WorkItemOid : public WorkItem{
 public:
-  WorkItemOdbData(const git_oid &oid, OdbObjectsInfo *odbObjectsInfo)
-    : m_oid(oid), m_odbObjectsInfo(odbObjectsInfo) {}
-  ~WorkItemOdbData() = default;
-  WorkItemOdbData(const WorkItemOdbData &other) = delete;
-  WorkItemOdbData(WorkItemOdbData &&other) = delete;
-  WorkItemOdbData& operator=(const WorkItemOdbData &other) = delete;
-  WorkItemOdbData& operator=(WorkItemOdbData &&other) = delete;
+  WorkItemOid(const git_oid &oid)
+    : m_oid(oid) {}
+  ~WorkItemOid() = default;
+  WorkItemOid(const WorkItemOid &other) = delete;
+  WorkItemOid(WorkItemOid &&other) = delete;
+  WorkItemOid& operator=(const WorkItemOid &other) = delete;
+  WorkItemOid& operator=(WorkItemOid &&other) = delete;
   
   const git_oid& GetOid() const { return m_oid; }
-  OdbObjectsInfo* GetOdbObjectsInfo() { return m_odbObjectsInfo; }
 
 private:
   git_oid m_oid {};
-  OdbObjectsInfo *m_odbObjectsInfo {nullptr};
-};
-
-/**
- * \struct MutexWorkerStoreOdbData
- * mutex objects needed by WorkerStoreOdbData
- */
-struct MutexWorkerStoreOdbData
-{
-  std::mutex mutexCommits {};
-  std::mutex mutexTrees {};
-  std::mutex mutexBlobs {};
-  std::mutex mutexTags {};
 };
 
 /**
@@ -297,8 +340,8 @@ struct MutexWorkerStoreOdbData
 class WorkerStoreOdbData : public IWorker
 {
 public:
-  WorkerStoreOdbData(const std::string &repoPath, MutexWorkerStoreOdbData *mutex)
-    : m_repoPath(repoPath), m_mutex(mutex) {}
+  WorkerStoreOdbData(const std::string &repoPath, OdbObjectsData *odbObjectsData)
+    : m_repoPath(repoPath), m_odbObjectsData(odbObjectsData) {}
   ~WorkerStoreOdbData();
   WorkerStoreOdbData(const WorkerStoreOdbData &other) = delete;
   WorkerStoreOdbData(WorkerStoreOdbData &&other) = delete;
@@ -309,12 +352,12 @@ public:
   bool Execute(std::unique_ptr<WorkItem> &&work);
 
 private:
-  OdbObjectsInfo::TreeDataAndStats thisTreeDataAndStats(git_tree *tree, size_t numEntries);
+  OdbObjectsData::TreeInfoAndStats thisTreeInfoAndStats(git_tree *tree, size_t size, size_t numEntries);
 
   std::string m_repoPath {};
   git_repository *m_repo {nullptr};
   git_odb *m_odb {nullptr};
-  MutexWorkerStoreOdbData *m_mutex {nullptr};
+  OdbObjectsData *m_odbObjectsData {nullptr};
 };
 
 /**
@@ -333,17 +376,21 @@ WorkerStoreOdbData::~WorkerStoreOdbData() {
  * WorkerStoreOdbData::Initialize
  */
 bool WorkerStoreOdbData::Initialize() {
-  if (m_repo != nullptr) // if already initialized
+  if (m_repo != nullptr) { // if already initialized
     return true;
+  }
 
-  if (m_repoPath.empty())
+  if (m_repoPath.empty()) {
     return false;
+  }
   else {
-    if (git_repository_open(&m_repo, m_repoPath.c_str()) != GIT_OK)
+    if (git_repository_open(&m_repo, m_repoPath.c_str()) != GIT_OK) {
       return false;
+    }
     
-    if (git_repository_odb(&m_odb, m_repo) != GIT_OK)
+    if (git_repository_odb(&m_odb, m_repo) != GIT_OK) {
       return false;
+    }
   }
   return true;
 }
@@ -353,7 +400,7 @@ bool WorkerStoreOdbData::Initialize() {
  */
 bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
 {
-  std::unique_ptr<WorkItemOdbData> wi {static_cast<WorkItemOdbData*>(work.release())};
+  std::unique_ptr<WorkItemOid> wi {static_cast<WorkItemOid*>(work.release())};
   const git_oid &oid = wi->GetOid();
 
   // NOTE about PERFORMANCE (May 2021):
@@ -366,7 +413,6 @@ bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
     return false;
   }
 
-  OdbObjectsInfo *odbObjectsInfo = wi->GetOdbObjectsInfo();
   switch (git_object_type(target))
   {
     case GIT_OBJECT_COMMIT:
@@ -384,22 +430,26 @@ bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
       size_t size = git_odb_object_size(obj);
       git_odb_object_free(obj);
 
-      // obtain commit info
-      std::string oidTree = std::string(reinterpret_cast<const char *>(git_commit_tree_id(commit)->id), GIT_OID_RAWSZ);
-      size_t numParents  = git_commit_parentcount(commit);
+      // obtain CommitInfo
+      unsigned int numParents = git_commit_parentcount(commit);
+      std::vector<std::string> parents {};
+      for (unsigned int i = 0; i < numParents; ++i) {
+        parents.emplace_back(reinterpret_cast<const char *>(git_commit_parent_id(commit, i)->id),
+          GIT_OID_RAWSZ);
+      }
+
+      OdbObjectsData::CommitInfo commitInfo {
+        std::string(reinterpret_cast<const char *>(git_commit_tree_id(commit)->id), GIT_OID_RAWSZ),
+        size,
+        std::move(parents),
+        OdbObjectsData::kUnreachable};
 
       { // lock
-        std::lock_guard<std::mutex> lock(m_mutex->mutexCommits);
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.commits);
 
-        if (odbObjectsInfo->commitsInfo.info.emplace(std::make_pair(
-            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
-            std::move(oidTree))).second == true) {
-          odbObjectsInfo->commitsInfo.totalSize += size;
-          odbObjectsInfo->commitsInfo.maxSize = std::max(odbObjectsInfo->commitsInfo.maxSize, size);
-          odbObjectsInfo->commitsInfo.maxParents = std::max(odbObjectsInfo->commitsInfo.maxParents, numParents);
-
-          odbObjectsInfo->commitsInfo.graph.AddNode(&oid, commit, static_cast<uint32_t>(numParents));
-        }
+        m_odbObjectsData->commits.info.emplace(std::make_pair(
+          std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+          std::move(commitInfo)));
       }
     }
       break;
@@ -425,18 +475,14 @@ bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
       git_odb_object_free(obj);
 
       // obtain tree data and calculate statistics for only this tree (not recursively)
-      OdbObjectsInfo::TreeDataAndStats treeDataAndStats = thisTreeDataAndStats(tree, numEntries);
+      OdbObjectsData::TreeInfoAndStats treeInfoAndStats = thisTreeInfoAndStats(tree, size, numEntries);
      
       { // lock
-        std::lock_guard<std::mutex> lock(m_mutex->mutexTrees);
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.trees);
 
-        if (odbObjectsInfo->treesInfo.info.emplace(std::make_pair(
-            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
-            std::move(treeDataAndStats))).second == true) {
-          odbObjectsInfo->treesInfo.totalSize += size;
-          odbObjectsInfo->treesInfo.totalEntries += numEntries;
-          odbObjectsInfo->treesInfo.maxEntries = std::max(odbObjectsInfo->treesInfo.maxEntries, numEntries);
-        }
+        m_odbObjectsData->trees.info.emplace(std::make_pair(
+          std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+          std::move(treeInfoAndStats)));
       }
     }
       break;
@@ -445,35 +491,34 @@ bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
     {
       git_blob *blob = (git_blob*)target;
       size_t size = git_blob_rawsize(blob);
+      OdbObjectsData::BlobInfo blobInfo {size, OdbObjectsData::kUnreachable};
 
       { // lock
-        std::lock_guard<std::mutex> lock(m_mutex->mutexBlobs);
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.blobs);
 
-        if (odbObjectsInfo->blobsInfo.info.emplace(std::make_pair(
-            std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
-            size)).second == true) {
-          odbObjectsInfo->blobsInfo.totalSize += size;
-          odbObjectsInfo->blobsInfo.maxSize = std::max(odbObjectsInfo->blobsInfo.maxSize, size);
-        }
+        m_odbObjectsData->blobs.info.emplace(std::make_pair(
+          std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
+          std::move(blobInfo)));
       }
     }
       break;
 
     case GIT_OBJECT_TAG:
     {
-      // obtain TagData
+      // obtain TagInfo
       git_tag *tag = (git_tag*)target;
       const git_oid *oid_target = git_tag_target_id(tag);
-      OdbObjectsInfo::TagData tagData {
+      OdbObjectsData::TagInfo tagInfo {
         std::string(reinterpret_cast<const char *>(oid_target->id), GIT_OID_RAWSZ),
         git_tag_target_type(tag),
-        OdbObjectsInfo::TagData::kUnsetDepth};
+        OdbObjectsData::TagInfo::kUnsetDepth,
+        OdbObjectsData::kUnreachable};
 
       { // lock
-        std::lock_guard<std::mutex> lock(m_mutex->mutexTags);
-        odbObjectsInfo->tagsInfo.info.emplace(std::make_pair(
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.tags);
+        m_odbObjectsData->tags.info.emplace(std::make_pair(
             std::string(reinterpret_cast<const char *>(oid.id), GIT_OID_RAWSZ),
-            std::move(tagData)));
+            std::move(tagInfo)));
       }
     }
       break;
@@ -488,23 +533,27 @@ bool WorkerStoreOdbData::Execute(std::unique_ptr<WorkItem> &&work)
 }
 
 /**
- * WorkerStoreOdbData::thisTreeDataAndStats
+ * WorkerStoreOdbData::thisTreeInfoAndStats
  * 
  * Obtain tree data and calculate the part of this tree's statistics that each thread can do.
  * 
  * \param tree tree to get data from and calculate partial statistics of.
+ * \param size tree size, to be added to the final result.
  * \param numEntries number of entries of this tree.
  * \return this tree's data and partial statistics.
   */
-OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tree *tree, size_t numEntries)
+OdbObjectsData::TreeInfoAndStats WorkerStoreOdbData::thisTreeInfoAndStats(git_tree *tree, size_t size,
+  size_t numEntries)
 {
-  OdbObjectsInfo::TreeDataAndStats treeDataAndStats {};
-
   const git_tree_entry *te {nullptr};
   git_object_t te_type {GIT_OBJECT_INVALID};
   const char *teName {nullptr};
   size_t teNameLen {0};
   const git_oid *te_oid {nullptr};
+
+  OdbObjectsData::TreeInfoAndStats treeInfoAndStats {};
+  treeInfoAndStats.size = size;
+  treeInfoAndStats.numEntries = numEntries;
 
   for (size_t i = 0; i < numEntries; ++i)
   {
@@ -520,7 +569,7 @@ OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tr
       // count submodules
       case GIT_OBJECT_COMMIT:
         if (git_tree_entry_filemode(te) == GIT_FILEMODE_COMMIT) {
-          ++treeDataAndStats.stats.numSubmodules;
+          ++treeInfoAndStats.stats.numSubmodules;
         }
         break;
 
@@ -528,17 +577,19 @@ OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tr
       {
         // count symbolic links, but don't add them as blob entries
         if (git_tree_entry_filemode(te) == GIT_FILEMODE_LINK) {
-          ++treeDataAndStats.stats.numSymlinks;
+          ++treeInfoAndStats.stats.numSymlinks;
         }
         else {
-          te_oid = git_tree_entry_id(te);
-          treeDataAndStats.entryBlobs.emplace_back(reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ);
-
-          ++treeDataAndStats.stats.numFiles;
+          ++treeInfoAndStats.stats.numFiles;
           teName = git_tree_entry_name(te);
           teNameLen = std::char_traits<char>::length(teName);
-          treeDataAndStats.stats.maxPathLength = std::max(treeDataAndStats.stats.maxPathLength, teNameLen);
+          treeInfoAndStats.stats.maxPathLength =
+            std::max<size_t>(treeInfoAndStats.stats.maxPathLength, teNameLen);
         }
+        // store both types of files (symbolic links and non symbolic links) as entryBlob
+        te_oid = git_tree_entry_id(te);
+        treeInfoAndStats.entryBlobs.emplace_back(
+          reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ);
       }
         break;
         
@@ -549,7 +600,7 @@ OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tr
         teNameLen = std::char_traits<char>::length(teName);
 
         te_oid = git_tree_entry_id(te);
-        treeDataAndStats.entryTreesNameLen.emplace_back(std::make_pair(
+        treeInfoAndStats.entryTreesNameLen.emplace_back(std::make_pair(
           std::string(reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ),
           teNameLen));
       }
@@ -560,26 +611,220 @@ OdbObjectsInfo::TreeDataAndStats WorkerStoreOdbData::thisTreeDataAndStats(git_tr
     }
   }
 
-  return treeDataAndStats;
+  return treeInfoAndStats;
 }
 
 /**
- * \struct ForEachOdbCbPayload
- * Payload for git_odb_foreach
+ * \class WorkItemOidStrType
+ * WorkItem storing pointers to object info structs for the WorkPool.
  */
-struct ForEachOdbCbPayload
-{
-  explicit ForEachOdbCbPayload(WorkerPool<WorkerStoreOdbData,WorkItemOdbData> *aWorkerPool, OdbObjectsInfo *aOdbObjectsInfo)
-    : workerPool(aWorkerPool), odbObjectsInfo(aOdbObjectsInfo) {}
-  ~ForEachOdbCbPayload() = default;
-  ForEachOdbCbPayload(const ForEachOdbCbPayload &other) = delete;
-  ForEachOdbCbPayload(ForEachOdbCbPayload &&other) = delete;
-  ForEachOdbCbPayload& operator=(const ForEachOdbCbPayload &other) = delete;
-  ForEachOdbCbPayload& operator=(ForEachOdbCbPayload &&other) = delete;
+class WorkItemOidStrType : public WorkItem{
+public:
+  WorkItemOidStrType(void *objectInfo, git_object_t type)
+    : m_objectInfo(objectInfo), m_oid_type(type) {}
+  ~WorkItemOidStrType() = default;
+  WorkItemOidStrType(const WorkItemOidStrType &other) = delete;
+  WorkItemOidStrType(WorkItemOidStrType &&other) = delete;
+  WorkItemOidStrType& operator=(const WorkItemOidStrType &other) = delete;
+  WorkItemOidStrType& operator=(WorkItemOidStrType &&other) = delete;
+  
+  void* GetObjectInfo() const { return m_objectInfo; }
+  const git_object_t& GetOidType() const { return m_oid_type; }
 
-  WorkerPool<WorkerStoreOdbData,WorkItemOdbData> *workerPool {nullptr};
-  OdbObjectsInfo *odbObjectsInfo {nullptr};
+private:
+  void *m_objectInfo {nullptr};
+  git_object_t m_oid_type {};
 };
+
+/**
+ * \class WorkerReachCounter
+ * Worker for the WorkPool to count reachability of each object.
+ */
+class WorkerReachCounter : public IWorker
+{
+public:
+  WorkerReachCounter(OdbObjectsData *odbObjectsData)
+    : m_odbObjectsData(odbObjectsData) {}
+  ~WorkerReachCounter() = default;
+  WorkerReachCounter(const WorkerReachCounter &other) = delete;
+  WorkerReachCounter(WorkerReachCounter &&other) = delete;
+  WorkerReachCounter& operator=(const WorkerReachCounter &other) = delete;
+  WorkerReachCounter& operator=(WorkerReachCounter &&other) = delete;
+
+  bool Initialize() { return true; }
+  bool Execute(std::unique_ptr<WorkItem> &&work);
+
+private:
+  void setReachabilityFromTags(void *objectInfo);
+  void setReachabilityFromCommits(void *objectInfo);
+  void setReachabilityFromTrees(void *objectInfo);
+
+  OdbObjectsData *m_odbObjectsData {nullptr};
+};
+
+/**
+ * WorkerReachCounter::Execute
+ */
+bool WorkerReachCounter::Execute(std::unique_ptr<WorkItem> &&work)
+{
+  std::unique_ptr<WorkItemOidStrType> wi {static_cast<WorkItemOidStrType*>(work.release())};
+  void *objectInfo = wi->GetObjectInfo();
+  const git_object_t &oid_type = wi->GetOidType();
+
+  switch (oid_type) {
+    case GIT_OBJECT_TAG:
+      setReachabilityFromTags(objectInfo);
+      break;
+    case GIT_OBJECT_COMMIT:
+      setReachabilityFromCommits(objectInfo);
+      break;
+    case GIT_OBJECT_TREE:
+      setReachabilityFromTrees(objectInfo);
+      break;
+    case GIT_OBJECT_BLOB:
+      // do not process blobs in this stage
+      break;
+    default:
+      break;
+  }
+
+  return true;
+}
+
+/**
+ * WorkerReachCounter::setReachabilityFromTags
+ * Adds reachability counter where tags point (any type of object).
+ */
+void WorkerReachCounter::setReachabilityFromTags(void *objectInfo)
+{
+  const OdbObjectsData::TagInfo *tagInfo = static_cast<const OdbObjectsData::TagInfo *>(objectInfo);
+
+  switch (tagInfo->typeTarget) {
+    case GIT_OBJECT_COMMIT:
+    {
+      OdbObjectsData::iterCommitInfo itCommitInfo =
+      m_odbObjectsData->commits.info.find(tagInfo->oidTarget);
+    
+      if (itCommitInfo != m_odbObjectsData->commits.info.end()) {
+        { // lock
+          std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.commits);
+          ++itCommitInfo->second.reachability;
+        }
+      }
+    }
+      break;
+
+    case GIT_OBJECT_TREE:
+    {
+      OdbObjectsData::iterTreeInfo itTreeInfo =
+      m_odbObjectsData->trees.info.find(tagInfo->oidTarget);
+    
+      if (itTreeInfo != m_odbObjectsData->trees.info.end()) {
+        { // lock
+          std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.trees);
+          ++itTreeInfo->second.reachability;
+        }
+      }
+    }
+
+    case GIT_OBJECT_BLOB:
+    {
+      OdbObjectsData::iterBlobInfo itBlobInfo =
+      m_odbObjectsData->blobs.info.find(tagInfo->oidTarget);
+    
+      if (itBlobInfo != m_odbObjectsData->blobs.info.end()) {
+        { // lock
+          std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.blobs);
+          ++itBlobInfo->second.reachability;
+        }
+      }
+    }
+
+    case GIT_OBJECT_TAG:
+    {
+      OdbObjectsData::iterTagInfo itTargetTagInfo =
+      m_odbObjectsData->tags.info.find(tagInfo->oidTarget);
+    
+      if (itTargetTagInfo != m_odbObjectsData->tags.info.end()) {
+        { // lock
+          std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.tags);
+          ++itTargetTagInfo->second.reachability;
+        }
+      }
+    }
+    default:
+      break;
+  }
+}
+
+/**
+ * WorkerReachCounter::setReachabilityFromCommits
+ * Adds reachability counter where commits point (parents and tree).
+ */
+void WorkerReachCounter::setReachabilityFromCommits(void *objectInfo)
+{
+  const OdbObjectsData::CommitInfo *commitInfo =
+    static_cast<const OdbObjectsData::CommitInfo *>(objectInfo);
+  size_t numParents = commitInfo->parents.size();
+
+  // set parents' reachability
+  for (size_t i = 0; i < numParents; ++i) {
+    OdbObjectsData::iterCommitInfo itParentCommitInfo =
+      m_odbObjectsData->commits.info.find(commitInfo->parents.at(i));
+    
+    if (itParentCommitInfo != m_odbObjectsData->commits.info.end()) {
+      { // lock
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.commits);
+        ++itParentCommitInfo->second.reachability;
+      }
+    }
+  }
+
+  // add 1 to its tree's reachability
+  OdbObjectsData::iterTreeInfo itCommitTreeInfo =
+    m_odbObjectsData->trees.info.find(commitInfo->oidTree);
+  
+  if (itCommitTreeInfo != m_odbObjectsData->trees.info.end()) {
+    { // lock
+      std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.trees);
+      ++itCommitTreeInfo->second.reachability;
+    }
+  }
+}
+
+/**
+ * WorkerReachCounter::setReachabilityFromTrees
+ * Adds reachability counter where tree entries point (blobs and other trees).
+ */
+void WorkerReachCounter::setReachabilityFromTrees(void *objectInfo)
+{
+  const OdbObjectsData::TreeInfoAndStats *treeInfo =
+    static_cast<const OdbObjectsData::TreeInfoAndStats *>(objectInfo);
+
+  // set entry blobs' reachability
+  for (auto &blob : treeInfo->entryBlobs) {
+    OdbObjectsData::iterBlobInfo itBlobInfo = m_odbObjectsData->blobs.info.find(blob);
+    
+    if (itBlobInfo != m_odbObjectsData->blobs.info.end()) {
+      { // lock
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.blobs);
+        ++itBlobInfo->second.reachability;
+      }
+    }
+  }
+
+  // set entry trees' reachability
+  for (auto &treeNameLen : treeInfo->entryTreesNameLen) {
+    OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData->trees.info.find(treeNameLen.first);
+    
+    if (itTreeInfo != m_odbObjectsData->trees.info.end()) {
+      { // lock
+        std::lock_guard<std::mutex> lock(m_odbObjectsData->infoMutex.trees);
+        ++itTreeInfo->second.reachability;
+      }
+    }
+  }
+}
 
 /**
  * forEachOdbCb. Callback for git_odb_foreach.
@@ -587,11 +832,13 @@ struct ForEachOdbCbPayload
  */
 static int forEachOdbCb(const git_oid *oid, void *payloadToCast)
 {
-  ForEachOdbCbPayload *payload = static_cast<ForEachOdbCbPayload *>(payloadToCast);
+  WorkerPool<WorkerStoreOdbData,WorkItemOid> *workerPool =
+    static_cast<WorkerPool<WorkerStoreOdbData,WorkItemOid>*>(payloadToCast);
 
   // Must insert copies of oid, since the pointers might not survive until worker thread picks it up
-  if (!payload->workerPool->InsertWork(std::make_unique<WorkItemOdbData>(*oid, payload->odbObjectsInfo)))
+  if (!workerPool->InsertWork(std::make_unique<WorkItemOid>(*oid))) {
     return GIT_EUSER;
+  }
 
   return GIT_OK;
 }
@@ -603,13 +850,15 @@ static int forEachOdbCb(const git_oid *oid, void *payloadToCast)
 class RepoAnalysis
 {
 public:
+  static constexpr unsigned int kMinThreads = 4;
+
   explicit RepoAnalysis(git_repository *repo)
-    : m_repo(repo) {}
+    // : m_repo(repo) {}
     // DEBUG TIMES
-    // : m_repo(repo) {  timeCreation = std::chrono::system_clock::now(); }
-  ~RepoAnalysis() = default;
+    : m_repo(repo) {  timeBegin = std::chrono::system_clock::now(); }
+  // ~RepoAnalysis() = default;
   // DEBUG TIMES
-  // ~RepoAnalysis() { timeDestruction = std::chrono::system_clock::now(); printTimes(); }
+  ~RepoAnalysis() { timeEnd = std::chrono::system_clock::now(); printTimes(); }
   RepoAnalysis(const RepoAnalysis &other) = delete;
   RepoAnalysis(RepoAnalysis &&other) = delete;
   RepoAnalysis& operator=(const RepoAnalysis &other) = delete;
@@ -618,24 +867,42 @@ public:
   int Analyze();
   v8::Local<v8::Object> StatisticsToJS() const;
 
-public:
   // DEBUG TIMES
-  // std::chrono::time_point<std::chrono::system_clock> timeCreation {};
-  // std::chrono::time_point<std::chrono::system_clock> timeStartOdbForEach {};
-  // std::chrono::time_point<std::chrono::system_clock> timeEndOdbForEach {};
-  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateBiggestCheckouts {};
-  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateMaxTagDepth {};
-  // std::chrono::time_point<std::chrono::system_clock> timeEndCalculateMaxDepth {};
-  // std::chrono::time_point<std::chrono::system_clock> timeEndAnalyzeReferences {};  
-  // std::chrono::time_point<std::chrono::system_clock> timeDestruction {};
+public:
+  std::chrono::time_point<std::chrono::system_clock> timeBegin {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginStoreObjectsInfo {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginSetObjectsReachability {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginPruneUnreachables {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginStatsCountAndMax {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcBiggestCheckouts {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxTagDepth {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxDepth {};
+  std::chrono::time_point<std::chrono::system_clock> timeEnd {};
 
 private:
-  int analyzeObjects();
+  // stage 1 methods: store data from repository (with threads)
+  int storeObjectsInfo();
+  int storeAndCountRefs();
+  // stage 2 methods: count reachability of each object (with threads)
+  // NOTE: we need this stage, since so far libgit2 doesn't provide unreachable objects
+  void setObjectsReachability();
+  void setReachabilityFromRefs();
+  void setUnreachables();
+  // stage 3 methods: prune unreachable oids
+  void pruneUnreachables();
+  void pruneUnreachableTags();
+  void pruneUnreachableCommits();
+  void pruneUnreachableTrees();
+  void pruneUnreachableBlobs();
+  // stage 4 methods: repositorySize and biggestObjects
+  void statsCountAndMax();
+  // stage 5 methods: historyStructure and biggestCheckouts
+  int statsHistoryAndBiggestCheckouts();
   int calculateBiggestCheckouts();
-  OdbObjectsInfo::iterTreeInfo calculateTreeStatistics(const std::string &oidTree);
+  OdbObjectsData::iterTreeInfo calculateTreeStatistics(const std::string &oidTree);
   int calculateMaxTagDepth();
-  OdbObjectsInfo::iterTagInfo calculateTagDepth(const std::string &oidTag);
-  int analyzeReferences();
+  OdbObjectsData::iterTagInfo calculateTagDepth(const std::string &oidTag);
+  // methods to return the statistics calculated
   void fillOutStatistics();
   v8::Local<v8::Object> repositorySizeToJS() const;
   v8::Local<v8::Object> biggestObjectsToJS() const;
@@ -643,12 +910,14 @@ private:
   v8::Local<v8::Object> biggestCheckoutsToJS() const;
 
   // DEBUG TIMES
-  // void printTimes() const;
+  void printTimes() const;
 
   git_repository *m_repo {nullptr};
   Statistics m_statistics {};
   // odb objects info to build while reading the object database by each thread
-  OdbObjectsInfo m_odbObjectsInfo {};
+  OdbObjectsData m_odbObjectsData {};
+  // oid and type of peeled references
+  std::unordered_map<std::string, git_object_t> m_peeledRefs {};
 };
 
 /**
@@ -658,280 +927,35 @@ int RepoAnalysis::Analyze()
 {
   int errorCode {GIT_OK};
 
-  if ((errorCode = analyzeObjects() != GIT_OK)) {
-    return errorCode;
-  }
-  if ((errorCode = analyzeReferences() != GIT_OK)) {
+  // DEBUG TIMES
+  timeBeginStoreObjectsInfo = std::chrono::system_clock::now();
+
+  if ((errorCode = storeObjectsInfo() != GIT_OK)) {
     return errorCode;
   }
 
   // DEBUG TIMES
-  // timeEndAnalyzeReferences = std::chrono::system_clock::now();
-  
+  timeBeginSetObjectsReachability = std::chrono::system_clock::now();
+
+  setObjectsReachability();
+
+  // DEBUG TIMES
+  timeBeginPruneUnreachables = std::chrono::system_clock::now();
+
+  pruneUnreachables();
+
+  // DEBUG TIMES
+  timeBeginStatsCountAndMax = std::chrono::system_clock::now();
+
+  statsCountAndMax();
+
+  if ((errorCode = statsHistoryAndBiggestCheckouts() != GIT_OK)) {
+    return errorCode;
+  }
+
   fillOutStatistics();
 
   return errorCode;
-}
-
-/**
- * RepoAnalysis::analyzeObjects
- * Analyzes objects (commits, trees, blobs, annotated tags)
- */
-int RepoAnalysis::analyzeObjects()
-{
-  int errorCode {GIT_OK};
-
-  // initialize workers for the worker pool
-  std::string repoPath = git_repository_path(m_repo);
-  unsigned int numThreads = std::max(std::thread::hardware_concurrency(), static_cast<unsigned int>(4));
-
-  MutexWorkerStoreOdbData mutex {};
-  std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
-  for (unsigned int i=0; i<numThreads; ++i) {
-    workers.emplace_back(std::make_shared<WorkerStoreOdbData>(repoPath, &mutex));
-  }
-
-  // initialize worker pool
-  WorkerPool<WorkerStoreOdbData,WorkItemOdbData> workerPool {};  
-  workerPool.Init(workers);
-
-  // gets the objects database
-  ForEachOdbCbPayload payload {&workerPool, &m_odbObjectsInfo};
-  git_odb *odb {nullptr};
-  if ((errorCode = git_repository_odb(&odb, m_repo)) != GIT_OK) {
-    return errorCode;
-  }
-
-  // DEBUG TIMES
-  // timeStartOdbForEach = std::chrono::system_clock::now();
-
-  // analyze all the objects and build commit history tree
-  if ((errorCode = git_odb_foreach(odb, forEachOdbCb, &payload)) != GIT_OK) {
-    git_odb_free(odb);
-    return errorCode;
-  }
-
-  // wait for the threads to finish analyzing each object from the database and shutdown the work pool
-  workerPool.Shutdown();
-
-  // DEBUG TIMES
-  // timeEndOdbForEach = std::chrono::system_clock::now();
-
-  git_odb_free(odb);
-
-  if ((errorCode = calculateBiggestCheckouts()) != GIT_OK) {
-    return errorCode;
-  }
-
-  // DEBUG TIMES
-  // timeEndCalculateBiggestCheckouts = std::chrono::system_clock::now();
-
-  if ((errorCode = calculateMaxTagDepth()) != GIT_OK) {
-    return errorCode;
-  }
-
-  // DEBUG TIMES
-  // timeEndCalculateMaxTagDepth = std::chrono::system_clock::now();
-
-  // calculate max commit history depth
-  m_statistics.historyStructure.maxDepth = m_odbObjectsInfo.commitsInfo.graph.CalculateMaxDepth();
-
-  // DEBUG TIMES
-  // timeEndCalculateMaxDepth = std::chrono::system_clock::now();
-
-  return errorCode;
-}
-
-/**
- * RepoAnalysis::calculateBiggestCheckouts
- * 
- * Once threads have collected data from objects, biggest checkouts can be calculated.
- * Threads have already collected partial non-recursive tree statistics.
- */
-int RepoAnalysis::calculateBiggestCheckouts()
-{
-  for (auto &commitInfo : m_odbObjectsInfo.commitsInfo.info)
-  {
-    // calculate this commit's data
-    const std::string &commitOidTree = commitInfo.second;
-
-    OdbObjectsInfo::iterTreeInfo itTreeInfo {};
-    if ((itTreeInfo = calculateTreeStatistics(commitOidTree)) == m_odbObjectsInfo.treesInfo.info.end())
-      return GIT_EUSER;
-
-    // update biggestCheckouts data
-    OdbObjectsInfo::TreeDataAndStats &treeDataAndStats = itTreeInfo->second;
-    m_statistics.biggestCheckouts.numDirectories = std::max(
-      m_statistics.biggestCheckouts.numDirectories, treeDataAndStats.stats.numDirectories);
-    m_statistics.biggestCheckouts.totalFileSize = std::max(
-      m_statistics.biggestCheckouts.totalFileSize, treeDataAndStats.stats.totalFileSize);
-    m_statistics.biggestCheckouts.maxPathDepth = std::max(
-      m_statistics.biggestCheckouts.maxPathDepth, treeDataAndStats.stats.maxPathDepth);
-    m_statistics.biggestCheckouts.numFiles = std::max(
-      m_statistics.biggestCheckouts.numFiles, treeDataAndStats.stats.numFiles);
-    m_statistics.biggestCheckouts.maxPathLength = std::max(
-      m_statistics.biggestCheckouts.maxPathLength, treeDataAndStats.stats.maxPathLength);
-    m_statistics.biggestCheckouts.numSymlinks = std::max(
-      m_statistics.biggestCheckouts.numSymlinks, treeDataAndStats.stats.numSymlinks);
-    m_statistics.biggestCheckouts.numSubmodules = std::max(
-      m_statistics.biggestCheckouts.numSubmodules, treeDataAndStats.stats.numSubmodules);
-  }
-
-  return GIT_OK;
-}
-
-/**
- * RepoAnalysis::calculateTreeStatistics
- * 
- * Calculates tree statistics recursively, considering individual tree's statistics
- * have already been calculated.
- * Returns an iterator to the tree info container, or to end of the tree info container if something went wrong.
- */
-OdbObjectsInfo::iterTreeInfo RepoAnalysis::calculateTreeStatistics(const std::string &oidTree)
-{
-  OdbObjectsInfo::iterTreeInfo itTreeInfo = m_odbObjectsInfo.treesInfo.info.find(oidTree);
-  if (itTreeInfo == m_odbObjectsInfo.treesInfo.info.end())
-    return itTreeInfo;
-
-  OdbObjectsInfo::TreeDataAndStats &treeDataAndStats = itTreeInfo->second;
-
-  // prune recursivity
-  if (treeDataAndStats.statsDone)
-    return itTreeInfo;
-
-  ++treeDataAndStats.stats.numDirectories;
-  ++treeDataAndStats.stats.maxPathDepth;
-  // the following partial statistics have also been calculated in previous stage with threads:
-  // - treeDataAndStats.stats.numFiles
-  // - treeDataAndStats.stats.maxPathLength
-  // - treeDataAndStats.stats.numSymLinks
-  // - treeDataAndStats.stats.numSubmodules
-
-  // totalFileSize
-  OdbObjectsInfo::iterBlobInfo itBlobInfo {};
-  for (auto &oidBlob : treeDataAndStats.entryBlobs)
-  {
-    if ((itBlobInfo = m_odbObjectsInfo.blobsInfo.info.find(oidBlob)) == m_odbObjectsInfo.blobsInfo.info.end())
-      return m_odbObjectsInfo.treesInfo.info.end(); // to let the caller know that something went wrong
-
-    treeDataAndStats.stats.totalFileSize += itBlobInfo->second;
-  }
-
-  // recursively into subtrees
-  for (const auto &subTreeNameLen : treeDataAndStats.entryTreesNameLen)
-  {
-    OdbObjectsInfo::iterTreeInfo itSubTreeInfo {};
-    if ((itSubTreeInfo = calculateTreeStatistics(subTreeNameLen.first)) == m_odbObjectsInfo.treesInfo.info.end())
-      return itSubTreeInfo;
-
-    OdbObjectsInfo::TreeDataAndStats &subTreeDataAndStats = itSubTreeInfo->second;
-    treeDataAndStats.stats.numDirectories += subTreeDataAndStats.stats.numDirectories;
-    treeDataAndStats.stats.maxPathDepth = std::max(
-      treeDataAndStats.stats.maxPathDepth, subTreeDataAndStats.stats.maxPathDepth + 1);
-    treeDataAndStats.stats.maxPathLength = std::max(
-      treeDataAndStats.stats.maxPathLength,
-      subTreeNameLen.second + 1 + subTreeDataAndStats.stats.maxPathLength);
-    treeDataAndStats.stats.numFiles += subTreeDataAndStats.stats.numFiles;
-    treeDataAndStats.stats.totalFileSize += subTreeDataAndStats.stats.totalFileSize;
-    treeDataAndStats.stats.numSymlinks += subTreeDataAndStats.stats.numSymlinks;
-    treeDataAndStats.stats.numSubmodules += subTreeDataAndStats.stats.numSubmodules;
-  }
-
-  treeDataAndStats.statsDone = true;
-
-  return itTreeInfo;
-}
-
-/**
- * RepoAnalysis::calculateMaxTagDepth
- */
-int RepoAnalysis::calculateMaxTagDepth()
-{
-  for (auto &tagInfo : m_odbObjectsInfo.tagsInfo.info)
-  {
-    OdbObjectsInfo::iterTagInfo itTagInfo {};
-    if ((itTagInfo = calculateTagDepth(tagInfo.first)) == m_odbObjectsInfo.tagsInfo.info.end())
-      return GIT_EUSER;
-
-    // update maxTagDepth
-    OdbObjectsInfo::TagData &tagData = itTagInfo->second;
-    m_statistics.historyStructure.maxTagDepth = std::max(
-      m_statistics.historyStructure.maxTagDepth, tagData.depth);
-  }
-
-  return GIT_OK;
-}
-
-/**
- * RepoAnalysis::calculateTagDepth
- * 
- * Calculates recursively the tag depth of the oidTag passed as a parameter.
- * Returns an iterator to the tag info container, or to end of the tag info container if something went wrong.
- */
-OdbObjectsInfo::iterTagInfo RepoAnalysis::calculateTagDepth(const std::string &oidTag)
-{
-  OdbObjectsInfo::iterTagInfo itTagInfo = m_odbObjectsInfo.tagsInfo.info.find(oidTag);
-  if (itTagInfo == m_odbObjectsInfo.tagsInfo.info.end())
-    return itTagInfo;
-
-  OdbObjectsInfo::TagData &tagData = itTagInfo->second;
-
-  // prune recursivity
-  if (tagData.depth != OdbObjectsInfo::TagData::kUnsetDepth)
-    return itTagInfo;
-
-  ++tagData.depth;
-
-  if (tagData.typeTarget == GIT_OBJECT_TAG)
-  {
-    OdbObjectsInfo::iterTagInfo itChainedTagInfo {};
-    if ((itChainedTagInfo = calculateTagDepth(tagData.oidTarget)) == m_odbObjectsInfo.tagsInfo.info.end())
-      return itChainedTagInfo;
-
-    OdbObjectsInfo::TagData &chainedTagData = itChainedTagInfo->second;
-    tagData.depth += chainedTagData.depth;
-  }
-
-  return itTagInfo;
-}
-
-/**
- * RepoAnalysis::analyzeReferences
- */
-int RepoAnalysis::analyzeReferences()
-{
-  int errorCode {GIT_OK};
-  git_strarray ref_list;
-
-  if ((errorCode = git_reference_list(&ref_list, m_repo)) != GIT_OK) {
-    return errorCode;
-  }
-  m_statistics.repositorySize.references.count = ref_list.count;
-  git_strarray_dispose(&ref_list);
-
-  return errorCode;
-}
-
-/**
- * RepoAnalysis::fillOutStatistics
- */
-void RepoAnalysis::fillOutStatistics()
-{
-  m_statistics.repositorySize.commits.count = m_odbObjectsInfo.commitsInfo.info.size();
-  m_statistics.repositorySize.commits.size = m_odbObjectsInfo.commitsInfo.totalSize;
-  m_statistics.repositorySize.trees.count = m_odbObjectsInfo.treesInfo.info.size();
-  m_statistics.repositorySize.trees.size = m_odbObjectsInfo.treesInfo.totalSize;
-  m_statistics.repositorySize.trees.entries = m_odbObjectsInfo.treesInfo.totalEntries;
-  m_statistics.repositorySize.blobs.count = m_odbObjectsInfo.blobsInfo.info.size();
-  m_statistics.repositorySize.blobs.size = m_odbObjectsInfo.blobsInfo.totalSize;
-  m_statistics.repositorySize.annotatedTags.count = m_odbObjectsInfo.tagsInfo.info.size();
-
-  m_statistics.biggestObjects.commits.maxSize = m_odbObjectsInfo.commitsInfo.maxSize;
-  m_statistics.biggestObjects.commits.maxParents = m_odbObjectsInfo.commitsInfo.maxParents;
-  m_statistics.biggestObjects.trees.maxEntries = m_odbObjectsInfo.treesInfo.maxEntries;
-  m_statistics.biggestObjects.blobs.maxSize = m_odbObjectsInfo.blobsInfo.maxSize;
-
-  // m_statistics.biggestCheckouts have already been filled out while running
 }
 
 /**
@@ -953,8 +977,727 @@ v8::Local<v8::Object> RepoAnalysis::StatisticsToJS() const
   v8::Local<v8::Object> biggestCheckouts = biggestCheckoutsToJS();
   Nan::Set(result, Nan::New("biggestCheckouts").ToLocalChecked(), biggestCheckouts);
 
-
   return result;
+}
+
+/**
+ * RepoAnalysis::storeObjectsInfo
+ * Store information from read odb objects.
+ * Build a container with only reachable objects (avoid dangling objects).
+ */
+int RepoAnalysis::storeObjectsInfo()
+{
+  int errorCode {GIT_OK};
+
+  // get the objects database
+  git_odb *odb {nullptr};
+  if ((errorCode = git_repository_odb(&odb, m_repo)) != GIT_OK) {
+    return errorCode;
+  }
+
+  // initialize workers for the worker pool
+  std::string repoPath = git_repository_path(m_repo);
+  unsigned int numThreads =
+    std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
+
+  std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
+  for (unsigned int i = 0; i < numThreads; ++i) {
+    workers.emplace_back(std::make_shared<WorkerStoreOdbData>(repoPath, &m_odbObjectsData));
+  }
+
+  // initialize worker pool
+  WorkerPool<WorkerStoreOdbData,WorkItemOid> workerPool {};  
+  workerPool.Init(workers);
+
+  if ((errorCode = git_odb_foreach(odb, forEachOdbCb, &workerPool)) != GIT_OK) {
+    git_odb_free(odb);
+    return errorCode;
+  }
+
+  // main thread will work on the refs while waiting for the threads to finish
+  if ((errorCode = storeAndCountRefs() != GIT_OK)) {
+    return errorCode;
+  }
+
+  // wait for the threads to finish and shutdown the work pool
+  workerPool.Shutdown();
+
+  git_odb_free(odb);
+
+  return errorCode;
+}
+
+/**
+ * RepoAnalysis::storeAndCountRefs
+ * Stores the oid and type of peeled references.
+ * Also counts total references.
+ */
+int RepoAnalysis::storeAndCountRefs()
+{
+  int errorCode {GIT_OK};
+  git_strarray ref_list;
+
+  // count refs
+  if ((errorCode = git_reference_list(&ref_list, m_repo)) != GIT_OK) {
+    return errorCode;
+  }
+  m_statistics.repositorySize.references.count = ref_list.count;
+
+  // store refs info
+  for (size_t i = 0; i < ref_list.count; ++i)
+  {
+    // lookup ref
+    git_reference *ref {nullptr};
+    int refLookupError = git_reference_lookup(&ref, m_repo, ref_list.strings[i]);
+    if (refLookupError == GIT_ENOTFOUND || refLookupError == GIT_EINVALIDSPEC) {
+      continue;
+    }
+    else if (refLookupError != GIT_OK) {
+      git_strarray_dispose(&ref_list);
+      return refLookupError;
+    }
+
+    // obtain peeled oid of the reference
+    const git_oid *oid_ref {nullptr};
+    switch (git_reference_type(ref))
+    {
+      case GIT_REFERENCE_DIRECT:
+        oid_ref = git_reference_target(ref);
+        break;
+
+      case GIT_REFERENCE_SYMBOLIC:
+      {
+        git_reference *ref_resolved {nullptr};
+        if ((errorCode = git_reference_resolve(&ref_resolved, ref)) != GIT_OK) {
+          git_reference_free(ref);
+          git_strarray_dispose(&ref_list);
+          return errorCode;
+        }
+        oid_ref = git_reference_target(ref_resolved);
+        git_reference_free(ref_resolved);
+      }
+        break;
+
+      default:
+        break;
+    }
+
+    // store object's oid and type
+    if (oid_ref != nullptr)
+    {
+      git_object *target {nullptr};
+      if (git_object_lookup(&target, m_repo, oid_ref, GIT_OBJECT_ANY) != GIT_OK) {
+        git_reference_free(ref);
+        git_strarray_dispose(&ref_list);
+        return false;
+      }
+
+      m_peeledRefs.emplace(std::make_pair(
+        std::string(reinterpret_cast<const char *>(oid_ref->id), GIT_OID_RAWSZ),
+        git_object_type(target)));
+
+      git_object_free(target);
+    }
+    git_reference_free(ref);
+  }
+  git_strarray_dispose(&ref_list);
+
+  return errorCode;
+}
+
+/**
+ * RepoAnalysis::setObjectsReachability
+ * Leverages threads to set reachability from tags, commits, and trees.
+ * NOTE: performance didn't improve leveraging threads for adding objects to unreachables container.
+ */
+void RepoAnalysis::setObjectsReachability()
+{
+  // references are not objects, hence they won't be sent to the worker threads
+  setReachabilityFromRefs();
+
+  unsigned int numThreads =
+    std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
+  std::vector< std::shared_ptr<WorkerReachCounter> > workers {};
+  for (unsigned int i = 0; i < numThreads; ++i) {
+    workers.emplace_back(std::make_shared<WorkerReachCounter>(&m_odbObjectsData));
+  }
+
+  // initialize worker pool
+  WorkerPool<WorkerReachCounter,WorkItemOidStrType> workerPool {};  
+  workerPool.Init(workers);
+
+  // NOTE: avoid queueing same type of objects in a row, so that different mutex can be used concurrently
+  uint8_t workInserted {0};
+  OdbObjectsData::iterTagInfo itTagInfo = m_odbObjectsData.tags.info.begin();
+  OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData.commits.info.begin();
+  OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.begin();
+  do {
+    workInserted = 0;
+    // insert tag
+    if (itTagInfo != m_odbObjectsData.tags.info.end()) {
+      if (!workerPool.InsertWork(
+        std::make_unique<WorkItemOidStrType>(&itTagInfo->second, GIT_OBJECT_TAG))) {
+        return;
+      }
+      ++itTagInfo;
+      ++workInserted;
+    }
+    // insert commmit
+    if (itCommitInfo != m_odbObjectsData.commits.info.end()) {
+      if (!workerPool.InsertWork(
+        std::make_unique<WorkItemOidStrType>(&itCommitInfo->second, GIT_OBJECT_COMMIT))) {
+        return;
+      }
+      ++itCommitInfo;
+      ++workInserted;
+    }
+    // insert tree
+    if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+      if (!workerPool.InsertWork(
+        std::make_unique<WorkItemOidStrType>(&itTreeInfo->second, GIT_OBJECT_TREE))) {
+        return;
+      }
+      ++itTreeInfo;
+      ++workInserted;
+    }
+    // blobs do not reach to any other object, hence no need to process them
+  } while (workInserted);
+
+  // wait for the threads to finish and shutdown the work pool
+  workerPool.Shutdown();
+
+  setUnreachables();
+}
+
+/**
+ * RepoAnalysis::setReachabilityFromRefs
+ * Adds reachability counter where peeled refs point (normally a commit or a tag).
+  */
+void RepoAnalysis::setReachabilityFromRefs()
+{
+  for (const auto &ref : m_peeledRefs) {
+    switch (ref.second) {
+      case GIT_OBJECT_COMMIT:
+      {
+        OdbObjectsData::iterCommitInfo itCommitInfo =
+        m_odbObjectsData.commits.info.find(ref.first);
+      
+        if (itCommitInfo != m_odbObjectsData.commits.info.end()) {
+          ++itCommitInfo->second.reachability;
+        }
+      }
+        break;
+      case GIT_OBJECT_TREE:
+      {
+        OdbObjectsData::iterTreeInfo itTreeInfo =
+        m_odbObjectsData.trees.info.find(ref.first);
+      
+        if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+          ++itTreeInfo->second.reachability;
+        }
+      }
+        break;
+      case GIT_OBJECT_BLOB:
+      {
+        OdbObjectsData::iterBlobInfo itBlobInfo =
+        m_odbObjectsData.blobs.info.find(ref.first);
+      
+        if (itBlobInfo != m_odbObjectsData.blobs.info.end()) {
+          ++itBlobInfo->second.reachability;
+        }
+      }
+        break;
+      case GIT_OBJECT_TAG:
+      {
+        OdbObjectsData::iterTagInfo itTagInfo =
+        m_odbObjectsData.tags.info.find(ref.first);
+      
+        if (itTagInfo != m_odbObjectsData.tags.info.end()) {
+          ++itTagInfo->second.reachability;
+        }
+      }
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+/**
+ * RepoAnalysis::setUnreachables
+ * After setting reachability, we add the unreached objects to their unreachables container.
+ */
+void RepoAnalysis::setUnreachables()
+  {
+    for (const auto &tag : m_odbObjectsData.tags.info) {
+      if (!tag.second.reachability) {
+        m_odbObjectsData.tags.unreachables.emplace(tag.first);
+      }
+    }
+    for (const auto &commit : m_odbObjectsData.commits.info) {
+      if (!commit.second.reachability) {
+        m_odbObjectsData.commits.unreachables.emplace(commit.first);
+      }
+    }
+    for (const auto &tree : m_odbObjectsData.trees.info) {
+      if (!tree.second.reachability) {
+        m_odbObjectsData.trees.unreachables.emplace(tree.first);
+      }
+    }
+    for (const auto &blob : m_odbObjectsData.blobs.info) {
+      if (!blob.second.reachability) {
+        m_odbObjectsData.blobs.unreachables.emplace(blob.first);
+      }
+    }
+  }
+
+/**
+ * RepoAnalysis::pruneUnreachables
+ * Removes from their containers the unreachable objects.
+ * Decreases reachability of the objects they can reach.
+  */
+void RepoAnalysis::pruneUnreachables()
+{
+  // NOTE: order is important here, since each method prunes its own objects, but
+  // only decreases reachability of the objects connected to it; and those
+  // connected objects will be checked and pruned afterwards.
+  pruneUnreachableTags();
+  pruneUnreachableCommits();
+  pruneUnreachableTrees();
+  pruneUnreachableBlobs();
+}
+
+/**
+ * RepoAnalysis::pruneUnreachableTags
+ * Prune tags and their chained tags if they become unreachable.
+ * Also decreases reachability of targets.
+  */
+void RepoAnalysis::pruneUnreachableTags()
+{
+  while (!m_odbObjectsData.tags.unreachables.empty()) {
+    std::unordered_set<std::string> newUnreachables {};
+
+    // erase unreachable tags
+    for (OdbObjectsData::iterUnreachable itTagUnrch = m_odbObjectsData.tags.unreachables.begin();
+      itTagUnrch != m_odbObjectsData.tags.unreachables.end(); ++itTagUnrch)
+    {
+      OdbObjectsData::iterTagInfo itTagInfo = m_odbObjectsData.tags.info.find(*itTagUnrch);
+    
+      if (itTagInfo != m_odbObjectsData.tags.info.end()) {
+        const std::string &oidTarget = itTagInfo->second.oidTarget;
+        switch (itTagInfo->second.typeTarget) {
+          case GIT_OBJECT_TAG:
+          {
+            // if target is another tag, add it to newUnreachables
+            OdbObjectsData::iterTagInfo itTargetTagInfo = m_odbObjectsData.tags.info.find(oidTarget);
+            if (itTargetTagInfo != m_odbObjectsData.tags.info.end()) {
+              if (--itTargetTagInfo->second.reachability == OdbObjectsData::kUnreachable) {
+                newUnreachables.emplace(itTargetTagInfo->first);
+              }
+            }
+          }
+            break;
+          case GIT_OBJECT_COMMIT:
+          {
+            OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData.commits.info.find(oidTarget);
+            if (itCommitInfo != m_odbObjectsData.commits.info.end()) {
+              if (--itCommitInfo->second.reachability == OdbObjectsData::kUnreachable) {
+                m_odbObjectsData.commits.unreachables.emplace(itCommitInfo->first);
+              }
+            }
+          }
+            break;
+          case GIT_OBJECT_TREE:
+          {
+            OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(oidTarget);
+            if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+              if (--itTreeInfo->second.reachability == OdbObjectsData::kUnreachable) {
+                m_odbObjectsData.trees.unreachables.emplace(itTreeInfo->first);
+              }
+            }
+          }
+            break;
+          case GIT_OBJECT_BLOB:
+          {
+            OdbObjectsData::iterBlobInfo itBlobInfo = m_odbObjectsData.blobs.info.find(oidTarget);
+            if (itBlobInfo != m_odbObjectsData.blobs.info.end()) {
+              if (--itBlobInfo->second.reachability == OdbObjectsData::kUnreachable) {
+                m_odbObjectsData.blobs.unreachables.emplace(itBlobInfo->first);
+              }
+            }
+          }
+            break;
+          default:
+            break;
+        }
+        // erase tag from the tag's container
+        m_odbObjectsData.tags.info.erase(itTagInfo);
+      }
+    }
+    // set new unreachable tags
+    m_odbObjectsData.tags.unreachables = std::move(newUnreachables);
+  }
+}
+
+/**
+ * RepoAnalysis::pruneUnreachableCommits
+ * Prune commits and decrease reachability of their associated trees.
+  */
+void RepoAnalysis::pruneUnreachableCommits()
+{
+  while (!m_odbObjectsData.commits.unreachables.empty()) {
+    std::unordered_set<std::string> newUnreachables {};
+
+    // erase unreachable commits
+    for (OdbObjectsData::iterUnreachable itCommitUnrch = m_odbObjectsData.commits.unreachables.begin();
+      itCommitUnrch != m_odbObjectsData.commits.unreachables.end(); ++itCommitUnrch)
+    {
+      OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData.commits.info.find(*itCommitUnrch);
+    
+      if (itCommitInfo != m_odbObjectsData.commits.info.end())
+      {
+        // decrease commit's parents reachability and add them as newUnreachable
+        size_t numParents = itCommitInfo->second.parents.size();
+        for (size_t i = 0; i < numParents; ++i) {
+          OdbObjectsData::iterCommitInfo itParentCommitInfo =
+            m_odbObjectsData.commits.info.find(itCommitInfo->second.parents.at(i));
+          
+          if (itParentCommitInfo != m_odbObjectsData.commits.info.end()) {
+            if (--itParentCommitInfo->second.reachability == OdbObjectsData::kUnreachable) {
+              newUnreachables.emplace(itParentCommitInfo->first);
+            }
+          }
+        }
+        // decrease reachability of the commit's tree
+        OdbObjectsData::iterTreeInfo itTreeInfo =
+          m_odbObjectsData.trees.info.find(itCommitInfo->second.oidTree);
+        if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+          if (--itTreeInfo->second.reachability == OdbObjectsData::kUnreachable) {
+            m_odbObjectsData.trees.unreachables.emplace(itTreeInfo->first);
+          }
+        }
+        // erase commit from the commit's container
+        m_odbObjectsData.commits.info.erase(itCommitInfo);
+      }
+    }
+    // set new unreachable commits
+    m_odbObjectsData.commits.unreachables = std::move(newUnreachables);
+  }
+}
+
+/**
+ * RepoAnalysis::pruneUnreachableTrees
+ * Prune unreachable trees and decrement reachability of their entries.
+  */
+void RepoAnalysis::pruneUnreachableTrees()
+{
+  while (!m_odbObjectsData.trees.unreachables.empty()) {
+    std::unordered_set<std::string> newUnreachables {};
+
+    // erase unreachable trees
+    for (OdbObjectsData::iterUnreachable itTreeUnrch = m_odbObjectsData.trees.unreachables.begin();
+      itTreeUnrch != m_odbObjectsData.trees.unreachables.end(); ++itTreeUnrch)
+    {
+      OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(*itTreeUnrch);
+    
+      if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+        // decrease reachability of the entry blobs
+        for (auto &blob : itTreeInfo->second.entryBlobs) {
+          OdbObjectsData::iterBlobInfo itEntryBlobInfo = m_odbObjectsData.blobs.info.find(blob);
+          if (itEntryBlobInfo != m_odbObjectsData.blobs.info.end()) {
+            if (--itEntryBlobInfo->second.reachability == OdbObjectsData::kUnreachable) {
+              m_odbObjectsData.blobs.unreachables.emplace(blob);
+            }
+          }
+        }
+        // decrease reachability of the entry trees and add them as newUnreachables
+        for (auto &treeNameLen : itTreeInfo->second.entryTreesNameLen) {
+          OdbObjectsData::iterTreeInfo itEntryTreeInfo =
+            m_odbObjectsData.trees.info.find(treeNameLen.first);
+          if (itEntryTreeInfo != m_odbObjectsData.trees.info.end()) {
+            if (--itEntryTreeInfo->second.reachability == OdbObjectsData::kUnreachable) {
+              newUnreachables.emplace(treeNameLen.first);
+            }
+          }
+        }
+        // erase tree from the tree's container
+        m_odbObjectsData.trees.info.erase(itTreeInfo);
+      }
+    }
+    // set new unreachable trees
+    m_odbObjectsData.trees.unreachables = std::move(newUnreachables);
+  }
+}
+
+/**
+ * RepoAnalysis::pruneUnreachableBlobs
+ * Rremoves unreachable blobs from their container.
+  */
+void RepoAnalysis::pruneUnreachableBlobs()
+{
+  for (OdbObjectsData::iterUnreachable itBlobUnrch = m_odbObjectsData.blobs.unreachables.begin();
+    itBlobUnrch != m_odbObjectsData.blobs.unreachables.end(); ++itBlobUnrch)
+  {
+    m_odbObjectsData.blobs.info.erase(*itBlobUnrch);
+  }
+}
+
+/**
+ * RepoAnalysis::statsCountAndMax
+ * Statistics for repositorySize (count objects) and biggestObjects (get maximum of them).
+ * Also builds the commits graph.
+ * NOTE: better results achieved not leveraging threads.
+ */
+void RepoAnalysis::statsCountAndMax()
+{
+  // commits
+  for (auto &info : m_odbObjectsData.commits.info) {
+    OdbObjectsData::CommitInfo &commitInfo = info.second;
+    size_t size = commitInfo.size;
+    size_t numParents = commitInfo.parents.size();
+
+    m_odbObjectsData.commits.totalSize += size;
+    m_odbObjectsData.commits.maxSize = std::max<size_t>(m_odbObjectsData.commits.maxSize, size);
+    m_odbObjectsData.commits.maxParents = std::max<size_t>(m_odbObjectsData.commits.maxParents, numParents);
+
+    // build commit's graph
+    m_odbObjectsData.commits.graph.AddNode(info.first,
+      commitInfo.parents, static_cast<uint32_t>(numParents));
+  }
+  // trees
+  for (auto &info : m_odbObjectsData.trees.info) {
+    OdbObjectsData::TreeInfoAndStats &treeInfo = info.second;
+    size_t size = treeInfo.size;
+    size_t numEntries = treeInfo.numEntries;
+
+    m_odbObjectsData.trees.totalSize += size;
+    m_odbObjectsData.trees.totalEntries += numEntries;
+    m_odbObjectsData.trees.maxEntries = std::max<size_t>(m_odbObjectsData.trees.maxEntries, numEntries);
+  }
+  // blobs
+  for (auto &info : m_odbObjectsData.blobs.info) {
+    OdbObjectsData::BlobInfo &blobInfo = info.second;
+    size_t size = blobInfo.size;
+
+    m_odbObjectsData.blobs.totalSize += size;
+    m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, size);
+  }
+  // no need to process tags here (we already have the count)
+}
+
+/**
+ * RepoAnalysis::statsHistoryAndBiggestCheckouts
+ * Statistics for historyStructure and biggestCheckouts.
+ */
+int RepoAnalysis::statsHistoryAndBiggestCheckouts()
+{
+  int errorCode {GIT_OK};
+
+  // DEBUG TIMES
+  timeBeginCalcBiggestCheckouts = std::chrono::system_clock::now();
+
+  if ((errorCode = calculateBiggestCheckouts()) != GIT_OK) {
+    return errorCode;
+  }
+
+  // DEBUG TIMES
+  timeBeginCalcMaxTagDepth = std::chrono::system_clock::now();
+
+  if ((errorCode = calculateMaxTagDepth()) != GIT_OK) {
+    return errorCode;
+  }
+
+  // DEBUG TIMES
+  timeBeginCalcMaxDepth = std::chrono::system_clock::now();
+
+  // calculate max commit history depth
+  m_statistics.historyStructure.maxDepth = m_odbObjectsData.commits.graph.CalculateMaxDepth();
+
+  return errorCode;
+}
+
+/**
+ * RepoAnalysis::calculateBiggestCheckouts
+ * 
+ * Once threads have collected data from objects, biggest checkouts can be calculated.
+ * Threads have already collected partial non-recursive tree statistics.
+ */
+int RepoAnalysis::calculateBiggestCheckouts()
+{
+  for (auto &commitInfo : m_odbObjectsData.commits.info)
+  {
+    // calculate this commit's data
+    const std::string &commitOidTree = commitInfo.second.oidTree;
+
+    OdbObjectsData::iterTreeInfo itTreeInfo {};
+    if ((itTreeInfo = calculateTreeStatistics(commitOidTree)) == m_odbObjectsData.trees.info.end()) {
+      return GIT_EUSER;
+    }
+
+    // update biggestCheckouts data
+    OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
+    m_statistics.biggestCheckouts.numDirectories = std::max<size_t>(
+      m_statistics.biggestCheckouts.numDirectories, treeInfoAndStats.stats.numDirectories);
+    m_statistics.biggestCheckouts.totalFileSize = std::max<size_t>(
+      m_statistics.biggestCheckouts.totalFileSize, treeInfoAndStats.stats.totalFileSize);
+    m_statistics.biggestCheckouts.maxPathDepth = std::max<size_t>(
+      m_statistics.biggestCheckouts.maxPathDepth, treeInfoAndStats.stats.maxPathDepth);
+    m_statistics.biggestCheckouts.numFiles = std::max<size_t>(
+      m_statistics.biggestCheckouts.numFiles, treeInfoAndStats.stats.numFiles);
+    m_statistics.biggestCheckouts.maxPathLength = std::max<size_t>(
+      m_statistics.biggestCheckouts.maxPathLength, treeInfoAndStats.stats.maxPathLength);
+    m_statistics.biggestCheckouts.numSymlinks = std::max<size_t>(
+      m_statistics.biggestCheckouts.numSymlinks, treeInfoAndStats.stats.numSymlinks);
+    m_statistics.biggestCheckouts.numSubmodules = std::max<size_t>(
+      m_statistics.biggestCheckouts.numSubmodules, treeInfoAndStats.stats.numSubmodules);
+  }
+
+  return GIT_OK;
+}
+
+/**
+ * RepoAnalysis::calculateTreeStatistics
+ * 
+ * Calculates tree statistics recursively, considering individual tree's statistics
+ * have already been calculated.
+ * Returns an iterator to the tree info container, or to end if something went wrong.
+ */
+OdbObjectsData::iterTreeInfo RepoAnalysis::calculateTreeStatistics(const std::string &oidTree)
+{
+  OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(oidTree);
+  if (itTreeInfo == m_odbObjectsData.trees.info.end()) {
+    return itTreeInfo;
+  }
+
+  OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
+
+  // prune recursivity
+  if (treeInfoAndStats.statsDone) {
+    return itTreeInfo;
+  }
+
+  ++treeInfoAndStats.stats.numDirectories;
+  ++treeInfoAndStats.stats.maxPathDepth;
+  // the following partial statistics have also been calculated in previous stage with threads:
+  // - treeInfoAndStats.stats.numFiles
+  // - treeInfoAndStats.stats.maxPathLength
+  // - treeInfoAndStats.stats.numSymLinks
+  // - treeInfoAndStats.stats.numSubmodules
+
+  // totalFileSize
+  OdbObjectsData::iterBlobInfo itBlobInfo {};
+  for (auto &oidBlob : treeInfoAndStats.entryBlobs)
+  {
+    if ((itBlobInfo = m_odbObjectsData.blobs.info.find(oidBlob)) == m_odbObjectsData.blobs.info.end()) {
+      return m_odbObjectsData.trees.info.end(); // to let the caller know that something went wrong
+    }
+
+    treeInfoAndStats.stats.totalFileSize += itBlobInfo->second.size;
+  }
+
+  // recursively into subtrees
+  for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
+  {
+    OdbObjectsData::iterTreeInfo itSubTreeInfo {};
+    if ((itSubTreeInfo = calculateTreeStatistics(subTreeNameLen.first)) ==
+      m_odbObjectsData.trees.info.end()) {
+      return itSubTreeInfo;
+    }
+
+    OdbObjectsData::TreeInfoAndStats &subTreeInfoAndStats = itSubTreeInfo->second;
+    treeInfoAndStats.stats.numDirectories += subTreeInfoAndStats.stats.numDirectories;
+    treeInfoAndStats.stats.maxPathDepth = std::max<size_t>(treeInfoAndStats.stats.maxPathDepth,
+      subTreeInfoAndStats.stats.maxPathDepth + 1);
+    treeInfoAndStats.stats.maxPathLength = std::max<size_t>(treeInfoAndStats.stats.maxPathLength,
+      subTreeNameLen.second + 1 + subTreeInfoAndStats.stats.maxPathLength);
+    treeInfoAndStats.stats.numFiles += subTreeInfoAndStats.stats.numFiles;
+    treeInfoAndStats.stats.totalFileSize += subTreeInfoAndStats.stats.totalFileSize;
+    treeInfoAndStats.stats.numSymlinks += subTreeInfoAndStats.stats.numSymlinks;
+    treeInfoAndStats.stats.numSubmodules += subTreeInfoAndStats.stats.numSubmodules;
+  }
+
+  treeInfoAndStats.statsDone = true;
+
+  return itTreeInfo;
+}
+
+/**
+ * RepoAnalysis::calculateMaxTagDepth
+ */
+int RepoAnalysis::calculateMaxTagDepth()
+{
+  for (auto &tag : m_odbObjectsData.tags.info)
+  {
+    OdbObjectsData::iterTagInfo itTagInfo {};
+    if ((itTagInfo = calculateTagDepth(tag.first)) == m_odbObjectsData.tags.info.end()) {
+      return GIT_EUSER;
+    }
+
+    // update maxTagDepth
+    OdbObjectsData::TagInfo &tagInfo = itTagInfo->second;
+    m_statistics.historyStructure.maxTagDepth = std::max<uint32_t>(m_statistics.historyStructure.maxTagDepth,
+      tagInfo.depth);
+  }
+
+  return GIT_OK;
+}
+
+/**
+ * RepoAnalysis::calculateTagDepth
+ * 
+ * Calculates recursively the tag depth of the oidTag passed as a parameter.
+ * Returns an iterator to the tag info container, or to end if something went wrong.
+ */
+OdbObjectsData::iterTagInfo RepoAnalysis::calculateTagDepth(const std::string &oidTag)
+{
+  OdbObjectsData::iterTagInfo itTagInfo = m_odbObjectsData.tags.info.find(oidTag);
+  if (itTagInfo == m_odbObjectsData.tags.info.end()) {
+    return itTagInfo;
+  }
+
+  OdbObjectsData::TagInfo &tagInfo = itTagInfo->second;
+
+  // prune recursivity
+  if (tagInfo.depth != OdbObjectsData::TagInfo::kUnsetDepth) {
+    return itTagInfo;
+  }
+
+  ++tagInfo.depth;
+
+  if (tagInfo.typeTarget == GIT_OBJECT_TAG)
+  {
+    OdbObjectsData::iterTagInfo itChainedTagInfo {};
+    if ((itChainedTagInfo = calculateTagDepth(tagInfo.oidTarget)) == m_odbObjectsData.tags.info.end()) {
+      return itChainedTagInfo;
+    }
+
+    OdbObjectsData::TagInfo &chainedTagInfo = itChainedTagInfo->second;
+    tagInfo.depth += chainedTagInfo.depth;
+  }
+
+  return itTagInfo;
+}
+
+/**
+ * RepoAnalysis::fillOutStatistics
+ */
+void RepoAnalysis::fillOutStatistics()
+{
+  m_statistics.repositorySize.commits.count = m_odbObjectsData.commits.info.size();
+  m_statistics.repositorySize.commits.size = m_odbObjectsData.commits.totalSize;
+  m_statistics.repositorySize.trees.count = m_odbObjectsData.trees.info.size();
+  m_statistics.repositorySize.trees.size = m_odbObjectsData.trees.totalSize;
+  m_statistics.repositorySize.trees.entries = m_odbObjectsData.trees.totalEntries;
+  m_statistics.repositorySize.blobs.count = m_odbObjectsData.blobs.info.size();
+  m_statistics.repositorySize.blobs.size = m_odbObjectsData.blobs.totalSize;
+  m_statistics.repositorySize.annotatedTags.count = m_odbObjectsData.tags.info.size();
+
+  m_statistics.biggestObjects.commits.maxSize = m_odbObjectsData.commits.maxSize;
+  m_statistics.biggestObjects.commits.maxParents = m_odbObjectsData.commits.maxParents;
+  m_statistics.biggestObjects.trees.maxEntries = m_odbObjectsData.trees.maxEntries;
+  m_statistics.biggestObjects.blobs.maxSize = m_odbObjectsData.blobs.maxSize;
+
+  // m_statistics.biggestCheckouts have already been filled out while running
 }
 
 /**
@@ -963,23 +1706,32 @@ v8::Local<v8::Object> RepoAnalysis::StatisticsToJS() const
 v8::Local<v8::Object> RepoAnalysis::repositorySizeToJS() const
 {
   v8::Local<v8::Object> commits = Nan::New<Object>();
-  Nan::Set(commits, Nan::New("count").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.commits.count));
-  Nan::Set(commits, Nan::New("size").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.commits.size));
+  Nan::Set(commits, Nan::New("count").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.commits.count));
+  Nan::Set(commits, Nan::New("size").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.commits.size));
 
   v8::Local<v8::Object> trees = Nan::New<Object>();
-  Nan::Set(trees, Nan::New("count").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.trees.count));
-  Nan::Set(trees, Nan::New("size").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.trees.size));
-  Nan::Set(trees, Nan::New("entries").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.trees.entries));
+  Nan::Set(trees, Nan::New("count").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.trees.count));
+  Nan::Set(trees, Nan::New("size").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.trees.size));
+  Nan::Set(trees, Nan::New("entries").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.trees.entries));
 
   v8::Local<v8::Object> blobs = Nan::New<Object>();
-  Nan::Set(blobs, Nan::New("count").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.blobs.count));
-  Nan::Set(blobs, Nan::New("size").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.blobs.size));
+  Nan::Set(blobs, Nan::New("count").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.blobs.count));
+  Nan::Set(blobs, Nan::New("size").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.blobs.size));
 
   v8::Local<v8::Object> annotatedTags = Nan::New<Object>();
-  Nan::Set(annotatedTags, Nan::New("count").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.annotatedTags.count));
+  Nan::Set(annotatedTags, Nan::New("count").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.annotatedTags.count));
 
   v8::Local<v8::Object> references = Nan::New<Object>();
-  Nan::Set(references, Nan::New("count").ToLocalChecked(), Nan::New<Number>(m_statistics.repositorySize.references.count));
+  Nan::Set(references, Nan::New("count").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.repositorySize.references.count));
 
   v8::Local<v8::Object> result = Nan::New<Object>();
   Nan::Set(result, Nan::New("commits").ToLocalChecked(), commits);
@@ -997,14 +1749,18 @@ v8::Local<v8::Object> RepoAnalysis::repositorySizeToJS() const
 v8::Local<v8::Object> RepoAnalysis::biggestObjectsToJS() const
 {
   v8::Local<v8::Object> commits = Nan::New<Object>();
-  Nan::Set(commits, Nan::New("maxSize").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestObjects.commits.maxSize));
-  Nan::Set(commits, Nan::New("maxParents").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestObjects.commits.maxParents));
+  Nan::Set(commits, Nan::New("maxSize").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestObjects.commits.maxSize));
+  Nan::Set(commits, Nan::New("maxParents").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestObjects.commits.maxParents));
 
   v8::Local<v8::Object> trees = Nan::New<Object>();
-  Nan::Set(trees, Nan::New("maxEntries").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestObjects.trees.maxEntries));
+  Nan::Set(trees, Nan::New("maxEntries").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestObjects.trees.maxEntries));
 
   v8::Local<v8::Object> blobs = Nan::New<Object>();
-  Nan::Set(blobs, Nan::New("maxSize").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestObjects.blobs.maxSize));
+  Nan::Set(blobs, Nan::New("maxSize").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestObjects.blobs.maxSize));
 
   v8::Local<v8::Object> result = Nan::New<Object>();
   Nan::Set(result, Nan::New("commits").ToLocalChecked(), commits);
@@ -1020,8 +1776,10 @@ v8::Local<v8::Object> RepoAnalysis::biggestObjectsToJS() const
 v8::Local<v8::Object> RepoAnalysis::historyStructureToJS() const
 {
   v8::Local<v8::Object> result = Nan::New<Object>();
-  Nan::Set(result, Nan::New("maxDepth").ToLocalChecked(), Nan::New<Number>(m_statistics.historyStructure.maxDepth));
-  Nan::Set(result, Nan::New("maxTagDepth").ToLocalChecked(), Nan::New<Number>(m_statistics.historyStructure.maxTagDepth));
+  Nan::Set(result, Nan::New("maxDepth").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.historyStructure.maxDepth));
+  Nan::Set(result, Nan::New("maxTagDepth").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.historyStructure.maxTagDepth));
 
   return result;
 }
@@ -1032,41 +1790,54 @@ v8::Local<v8::Object> RepoAnalysis::historyStructureToJS() const
 v8::Local<v8::Object> RepoAnalysis::biggestCheckoutsToJS() const
 {
   v8::Local<v8::Object> result = Nan::New<Object>();
-  Nan::Set(result, Nan::New("numDirectories").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.numDirectories));
-  Nan::Set(result, Nan::New("maxPathDepth").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.maxPathDepth));
-  Nan::Set(result, Nan::New("maxPathLength").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.maxPathLength));
-  Nan::Set(result, Nan::New("numFiles").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.numFiles));
-  Nan::Set(result, Nan::New("totalFileSize").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.totalFileSize));
-  Nan::Set(result, Nan::New("numSymlinks").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.numSymlinks));
-  Nan::Set(result, Nan::New("numSubmodules").ToLocalChecked(), Nan::New<Number>(m_statistics.biggestCheckouts.numSubmodules));
+  Nan::Set(result, Nan::New("numDirectories").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.numDirectories));
+  Nan::Set(result, Nan::New("maxPathDepth").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.maxPathDepth));
+  Nan::Set(result, Nan::New("maxPathLength").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.maxPathLength));
+  Nan::Set(result, Nan::New("numFiles").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.numFiles));
+  Nan::Set(result, Nan::New("totalFileSize").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.totalFileSize));
+  Nan::Set(result, Nan::New("numSymlinks").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.numSymlinks));
+  Nan::Set(result, Nan::New("numSubmodules").ToLocalChecked(),
+    Nan::New<Number>(m_statistics.biggestCheckouts.numSubmodules));
 
   return result;
 }
 
 // DEBUG TIMES
-// void RepoAnalysis::printTimes() const {
-//   std::cout<< "duration ms (creation -> destruction): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeDestruction - timeCreation).count()
-//     << std::endl;
-//   std::cout<< "duration ms (creation -> timeStartOdbForEach): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeStartOdbForEach - timeCreation).count()
-//     << std::endl;
-//   std::cout<< "duration ms (timeStartOdbForEach -> timeEndOdbForEach): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeEndOdbForEach - timeStartOdbForEach).count()
-//     << std::endl;
-//   std::cout<< "duration ms (timeEndOdbForEach -> timeEndCalculateBiggestCheckouts): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateBiggestCheckouts - timeEndOdbForEach).count()
-//     << std::endl;
-//   std::cout<< "duration ms (timeEndCalculateBiggestCheckouts -> timeEndCalculateMaxTagDepth): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateMaxTagDepth - timeEndCalculateBiggestCheckouts).count()
-//     << std::endl;
-//   std::cout<< "duration ms (timeEndCalculateMaxTagDepth -> timeEndCalculateMaxDepth): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeEndCalculateMaxDepth - timeEndCalculateMaxTagDepth).count()
-//     << std::endl;
-//   std::cout<< "duration ms (timeEndCalculateMaxDepth -> timeEndAnalyzeReferences): "
-//     << chrono::duration_cast<chrono::milliseconds>(timeEndAnalyzeReferences - timeEndCalculateMaxDepth).count()
-//     << std::endl;
-// }
+void RepoAnalysis::printTimes() const {
+  std::cout<< "duration ms (begin -> end): "
+    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBegin).count()
+    << std::endl;
+  std::cout<< "duration ms (begin -> timeBeginStoreObjectsInfo): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginStoreObjectsInfo - timeBegin).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginStoreObjectsInfo -> timeBeginSetObjectsReachability): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginSetObjectsReachability - timeBeginStoreObjectsInfo).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginSetObjectsReachability -> timeBeginPruneUnreachables): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginPruneUnreachables - timeBeginSetObjectsReachability).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginPruneUnreachables -> timeBeginStatsCountAndMax): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginStatsCountAndMax - timeBeginPruneUnreachables).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginStatsCountAndMax -> timeBeginCalcBiggestCheckouts): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcBiggestCheckouts - timeBeginStatsCountAndMax).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcBiggestCheckouts -> timeBeginCalcMaxTagDepth): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxTagDepth - timeBeginCalcBiggestCheckouts).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcMaxTagDepth -> timeBeginCalcMaxDepth): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxDepth - timeBeginCalcMaxTagDepth).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeEnd): "
+    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginCalcMaxDepth).count()
+    << std::endl;
+}
 
 NAN_METHOD(GitRepository::Statistics)
 {
@@ -1085,7 +1856,8 @@ NAN_METHOD(GitRepository::Statistics)
   std::map<std::string, std::shared_ptr<nodegit::CleanupHandle>> cleanupHandles;
   StatisticsWorker *worker = new StatisticsWorker(baton, callback, cleanupHandles);
   worker->Reference<GitRepository>("repo", info.This());
-  nodegit::Context *nodegitContext = reinterpret_cast<nodegit::Context *>(info.Data().As<External>()->Value());
+  nodegit::Context *nodegitContext =
+    reinterpret_cast<nodegit::Context *>(info.Data().As<External>()->Value());
   nodegitContext->QueueWorker(worker);
   return;
 }
