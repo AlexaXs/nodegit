@@ -853,12 +853,8 @@ public:
   static constexpr unsigned int kMinThreads = 4;
 
   explicit RepoAnalysis(git_repository *repo)
-    // : m_repo(repo) {}
-    // DEBUG TIMES
-    : m_repo(repo) {  timeBegin = std::chrono::system_clock::now(); }
-  // ~RepoAnalysis() = default;
-  // DEBUG TIMES
-  ~RepoAnalysis() { timeEnd = std::chrono::system_clock::now(); printTimes(); }
+    : m_repo(repo) {}
+  ~RepoAnalysis() = default;
   RepoAnalysis(const RepoAnalysis &other) = delete;
   RepoAnalysis(RepoAnalysis &&other) = delete;
   RepoAnalysis& operator=(const RepoAnalysis &other) = delete;
@@ -866,18 +862,6 @@ public:
 
   int Analyze();
   v8::Local<v8::Object> StatisticsToJS() const;
-
-  // DEBUG TIMES
-public:
-  std::chrono::time_point<std::chrono::system_clock> timeBegin {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginStoreObjectsInfo {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginSetObjectsReachability {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginPruneUnreachables {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginStatsCountAndMax {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcBiggestCheckouts {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxTagDepth {};
-  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxDepth {};
-  std::chrono::time_point<std::chrono::system_clock> timeEnd {};
 
 private:
   // stage 1 methods: store data from repository (with threads)
@@ -897,10 +881,10 @@ private:
   // stage 4 methods: repositorySize and biggestObjects
   void statsCountAndMax();
   // stage 5 methods: historyStructure and biggestCheckouts
-  int statsHistoryAndBiggestCheckouts();
-  int calculateBiggestCheckouts();
+  bool statsHistoryAndBiggestCheckouts();
+  bool calculateBiggestCheckouts();
   OdbObjectsData::iterTreeInfo calculateTreeStatistics(const std::string &oidTree);
-  int calculateMaxTagDepth();
+  bool calculateMaxTagDepth();
   OdbObjectsData::iterTagInfo calculateTagDepth(const std::string &oidTag);
   // methods to return the statistics calculated
   void fillOutStatistics();
@@ -908,9 +892,6 @@ private:
   v8::Local<v8::Object> biggestObjectsToJS() const;
   v8::Local<v8::Object> historyStructureToJS() const;
   v8::Local<v8::Object> biggestCheckoutsToJS() const;
-
-  // DEBUG TIMES
-  void printTimes() const;
 
   git_repository *m_repo {nullptr};
   Statistics m_statistics {};
@@ -927,30 +908,17 @@ int RepoAnalysis::Analyze()
 {
   int errorCode {GIT_OK};
 
-  // DEBUG TIMES
-  timeBeginStoreObjectsInfo = std::chrono::system_clock::now();
-
   if ((errorCode = storeObjectsInfo() != GIT_OK)) {
     return errorCode;
   }
 
-  // DEBUG TIMES
-  timeBeginSetObjectsReachability = std::chrono::system_clock::now();
-
   setObjectsReachability();
-
-  // DEBUG TIMES
-  timeBeginPruneUnreachables = std::chrono::system_clock::now();
-
   pruneUnreachables();
-
-  // DEBUG TIMES
-  timeBeginStatsCountAndMax = std::chrono::system_clock::now();
 
   statsCountAndMax();
 
-  if ((errorCode = statsHistoryAndBiggestCheckouts() != GIT_OK)) {
-    return errorCode;
+  if (!statsHistoryAndBiggestCheckouts()) {
+    return GIT_EUSER;
   }
 
   fillOutStatistics();
@@ -1488,32 +1456,22 @@ void RepoAnalysis::statsCountAndMax()
 /**
  * RepoAnalysis::statsHistoryAndBiggestCheckouts
  * Statistics for historyStructure and biggestCheckouts.
+ * \return true if success; false if something went wrong.
  */
-int RepoAnalysis::statsHistoryAndBiggestCheckouts()
+bool RepoAnalysis::statsHistoryAndBiggestCheckouts()
 {
-  int errorCode {GIT_OK};
-
-  // DEBUG TIMES
-  timeBeginCalcBiggestCheckouts = std::chrono::system_clock::now();
-
-  if ((errorCode = calculateBiggestCheckouts()) != GIT_OK) {
-    return errorCode;
+  if (!calculateBiggestCheckouts()) {
+    return false;
   }
 
-  // DEBUG TIMES
-  timeBeginCalcMaxTagDepth = std::chrono::system_clock::now();
-
-  if ((errorCode = calculateMaxTagDepth()) != GIT_OK) {
-    return errorCode;
+  if (!calculateMaxTagDepth()) {
+    return false;
   }
-
-  // DEBUG TIMES
-  timeBeginCalcMaxDepth = std::chrono::system_clock::now();
 
   // calculate max commit history depth
   m_statistics.historyStructure.maxDepth = m_odbObjectsData.commits.graph.CalculateMaxDepth();
 
-  return errorCode;
+  return true;
 }
 
 /**
@@ -1521,8 +1479,9 @@ int RepoAnalysis::statsHistoryAndBiggestCheckouts()
  * 
  * Once threads have collected data from objects, biggest checkouts can be calculated.
  * Threads have already collected partial non-recursive tree statistics.
+ * \return true if success; false if something went wrong.
  */
-int RepoAnalysis::calculateBiggestCheckouts()
+bool RepoAnalysis::calculateBiggestCheckouts()
 {
   for (auto &commitInfo : m_odbObjectsData.commits.info)
   {
@@ -1531,7 +1490,7 @@ int RepoAnalysis::calculateBiggestCheckouts()
 
     OdbObjectsData::iterTreeInfo itTreeInfo {};
     if ((itTreeInfo = calculateTreeStatistics(commitOidTree)) == m_odbObjectsData.trees.info.end()) {
-      return GIT_EUSER;
+      return false;
     }
 
     // update biggestCheckouts data
@@ -1552,7 +1511,7 @@ int RepoAnalysis::calculateBiggestCheckouts()
       m_statistics.biggestCheckouts.numSubmodules, treeInfoAndStats.stats.numSubmodules);
   }
 
-  return GIT_OK;
+  return true;
 }
 
 /**
@@ -1623,14 +1582,15 @@ OdbObjectsData::iterTreeInfo RepoAnalysis::calculateTreeStatistics(const std::st
 
 /**
  * RepoAnalysis::calculateMaxTagDepth
+ * \return true if success; false if something went wrong.
  */
-int RepoAnalysis::calculateMaxTagDepth()
+bool RepoAnalysis::calculateMaxTagDepth()
 {
   for (auto &tag : m_odbObjectsData.tags.info)
   {
     OdbObjectsData::iterTagInfo itTagInfo {};
     if ((itTagInfo = calculateTagDepth(tag.first)) == m_odbObjectsData.tags.info.end()) {
-      return GIT_EUSER;
+      return false;
     }
 
     // update maxTagDepth
@@ -1639,7 +1599,7 @@ int RepoAnalysis::calculateMaxTagDepth()
       tagInfo.depth);
   }
 
-  return GIT_OK;
+  return true;
 }
 
 /**
@@ -1806,37 +1766,6 @@ v8::Local<v8::Object> RepoAnalysis::biggestCheckoutsToJS() const
     Nan::New<Number>(m_statistics.biggestCheckouts.numSubmodules));
 
   return result;
-}
-
-// DEBUG TIMES
-void RepoAnalysis::printTimes() const {
-  std::cout<< "duration ms (begin -> end): "
-    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBegin).count()
-    << std::endl;
-  std::cout<< "duration ms (begin -> timeBeginStoreObjectsInfo): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginStoreObjectsInfo - timeBegin).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginStoreObjectsInfo -> timeBeginSetObjectsReachability): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginSetObjectsReachability - timeBeginStoreObjectsInfo).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginSetObjectsReachability -> timeBeginPruneUnreachables): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginPruneUnreachables - timeBeginSetObjectsReachability).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginPruneUnreachables -> timeBeginStatsCountAndMax): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginStatsCountAndMax - timeBeginPruneUnreachables).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginStatsCountAndMax -> timeBeginCalcBiggestCheckouts): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcBiggestCheckouts - timeBeginStatsCountAndMax).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginCalcBiggestCheckouts -> timeBeginCalcMaxTagDepth): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxTagDepth - timeBeginCalcBiggestCheckouts).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginCalcMaxTagDepth -> timeBeginCalcMaxDepth): "
-    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxDepth - timeBeginCalcMaxTagDepth).count()
-    << std::endl;
-  std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeEnd): "
-    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginCalcMaxDepth).count()
-    << std::endl;
 }
 
 NAN_METHOD(GitRepository::Statistics)
