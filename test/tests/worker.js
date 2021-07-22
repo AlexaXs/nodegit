@@ -53,7 +53,7 @@ if (Worker) {
     });
 
     for (let i = 0; i < 5; ++i) {
-      it(`can kill worker thread while in use #${i}`, function(done) { // jshint ignore:line
+      it.only(`can kill worker thread while in use #${i}`, function(done) { // jshint ignore:line
         const workerPath = local("../utils/worker.js");
         const worker = new Worker(workerPath, { 
           workerData: {
@@ -64,18 +64,25 @@ if (Worker) {
         worker.on("message", (message) => {
           switch (message) {
             case "init":
+              console.log("init\n");
               setTimeout(() => { worker.terminate(); }, 500);
               break;
             case "success":
+              console.log("success\n");
               assert.fail();
               break;
             case "failure":
+              console.log("failure\n");
               assert.fail();
               break;
           }
         });
-        worker.on("error", () => assert.fail());
+        worker.on("error", () => {
+          console.log("error\n");
+          assert.fail();
+        });
         worker.on("exit", (code) => {
+          console.log("exit code", code, "\n");
           if (code === 1) {
             done();
           } else {
