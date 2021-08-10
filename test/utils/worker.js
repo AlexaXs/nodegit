@@ -22,19 +22,45 @@ const opts = {
   }
 };
 
+// ORIGINAL TEST
+
+// let repository;
+// return NodeGit.Clone(url, clonePath, opts).then((_repository) => {
+//   repository = _repository;
+//   assert.ok(repository instanceof NodeGit.Repository);
+//   return repository.index();
+// }).then((index) => {
+//   assert.ok(index instanceof NodeGit.Index);
+//   return repository.getRemoteNames();
+// }).then((remotes) => {
+//   assert.ok(Array.isArray(remotes));
+//   return repository.getCurrentBranch();
+// }).then((branch) => {
+//   assert.ok(branch instanceof NodeGit.Reference);
+//   parentPort.postMessage("success");
+//   return promisify(setTimeout)(15000);
+// }).catch(() => parentPort.postMessage("failure"));
+
+// BLAME TEST
+
+var Blame = NodeGit.Blame;
+var fileName = "README.md";
+
 let repository;
+let blame;
+
 return NodeGit.Clone(url, clonePath, opts).then((_repository) => {
   repository = _repository;
   assert.ok(repository instanceof NodeGit.Repository);
-  return repository.index();
-}).then((index) => {
-  assert.ok(index instanceof NodeGit.Index);
-  return repository.getRemoteNames();
-}).then((remotes) => {
-  assert.ok(Array.isArray(remotes));
-  return repository.getCurrentBranch();
-}).then((branch) => {
-  assert.ok(branch instanceof NodeGit.Reference);
+  blame = Blame.file(repository, fileName);
+  return blame;
+}).then((_blame) => {
+  assert.ok(_blame instanceof NodeGit.Blame);
+
+  const blameHunk = _blame.getHunkByIndex(0);
+  const numLines = blameHunk.linesInHunk();
+  console.log("numLines in hunk: ", numLines, "\n");
+
   parentPort.postMessage("success");
-  return promisify(setTimeout)(15000);
+  return promisify(setTimeout)(25000);
 }).catch(() => parentPort.postMessage("failure"));
