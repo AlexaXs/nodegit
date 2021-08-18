@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <unordered_map>
 
+#include "tracker.h"
 #include "cleanup_handle.h"
 
 // the Traits template parameter supplies:
@@ -16,13 +17,16 @@
 //
 //  static const bool isFreeable
 //  static void free(cType *raw) - frees the object using freeFunctionName
+//
+// nodegit::Tracker allows for cheap tracking of new objects, avoiding searchs
+// in a container to remove the tracking of a specific object.
 
 namespace nodegit {
   class Context;
 }
 
 template<typename Traits>
-class NodeGitWrapper : public Nan::ObjectWrap {
+class NodeGitWrapper : public Nan::ObjectWrap, protected nodegit::Tracker {
 public:
   // replicate Traits typedefs for ease of use
   typedef typename Traits::cType cType;
@@ -37,7 +41,7 @@ public:
   // a separate issue.
   bool selfFreeing;
 
-  const nodegit::Context *nodegitContext = nullptr;
+  nodegit::Context *nodegitContext = nullptr;
 
 protected:
   cType *raw;

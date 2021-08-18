@@ -25,6 +25,7 @@
 #include "async_worker.h"
 #include "cleanup_handle.h"
 #include "thread_pool.h"
+#include "tracker.h"
 
 namespace nodegit {
   class AsyncContextCleanupHandle;
@@ -54,6 +55,8 @@ namespace nodegit {
 
     void ShutdownThreadPool(std::unique_ptr<AsyncContextCleanupHandle> cleanupHandle);
 
+    void LinkToTrackerList(nodegit::Tracker::TrackerList *list);
+
   private:
     v8::Isolate *isolate;
 
@@ -66,6 +69,8 @@ namespace nodegit {
     Nan::Global<v8::Object> persistentStorage;
 
     std::map<std::string, std::shared_ptr<CleanupHandle>> cleanupHandles;
+
+    nodegit::Tracker::TrackerList trackerList;
 
     static std::map<v8::Isolate *, Context *> contexts;
   };
