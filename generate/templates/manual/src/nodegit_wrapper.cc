@@ -21,6 +21,7 @@ NodeGitWrapper<Traits>::NodeGitWrapper(typename Traits::cType *raw, bool selfFre
       Traits::duplicate(&this->raw, raw);
       selfFreeing = true;
     } else {
+      SetTrackerOwners(owner);
       this->owner.Reset(owner);
       this->raw = raw;
     }
@@ -77,6 +78,25 @@ NAN_METHOD(NodeGitWrapper<Traits>::JSNewFunction) {
 
   instance->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
+}
+
+template<typename Traits>
+void NodeGitWrapper<Traits>::SetTrackerOwners(v8::Local<v8::Object> owners) {
+  assert(owners->IsArray());
+
+  Nan::HandleScope scope;
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  const v8::Local<v8::Array> array = owners.As<v8::Array>();
+  uint32_t length = array->Length();
+  std::vector<nodegit::Tracker::TrackerList*> trackOwners {};
+
+  for (uint32_t i = 0; i < length; ++i) {
+    v8::Local<v8::Value> v = array->Get(context, i).ToLocalChecked();
+    const v8::Local<v8::Object> o = v.As<v8::Object>();
+    Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(o);
+    trackOwners.push_back(reinterpret_cast<nodegit::Tracker::TrackerList*>(oWrap));
+  }
+  SetOwners(trackOwners);
 }
 
 template<typename Traits>

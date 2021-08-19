@@ -85,8 +85,4 @@ namespace nodegit {
   void Context::ShutdownThreadPool(std::unique_ptr<AsyncContextCleanupHandle> cleanupHandle) {
     threadPool.Shutdown(std::move(cleanupHandle));
   }
-
-  void Context::LinkToTrackerList(nodegit::Tracker::TrackerList *list) {
-    list->Link(&trackerList);
-  }
 }

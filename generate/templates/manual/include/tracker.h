@@ -37,6 +37,14 @@ namespace nodegit {
       m_next = nullptr;
     }
 
+    inline void SetOwners(std::vector<TrackerList*> owners) {
+      m_owners = owners;
+    }
+
+    inline const std::vector<TrackerList*>& GetOwners() const {
+      return m_owners;
+    }
+
     // Deletes 'listStart'
     static void DeleteAll(TrackerList* listStart) {
       while (listStart->m_next != nullptr) {
@@ -47,6 +55,7 @@ namespace nodegit {
   private:
     TrackerList* m_next {nullptr};
     TrackerList* m_prev {nullptr};
+    std::vector<TrackerList*> m_owners {};
   };
 }
 
