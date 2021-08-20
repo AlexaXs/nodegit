@@ -1,19 +1,21 @@
-#ifndef TRACKER_H
-#define TRACKER_H
+#ifndef TRACKERWRAP_H
+#define TRACKERWRAP_H
+
+#include <nan.h>
 
 namespace nodegit {
   // Base class used to track objects.
   // Implementation based on node.js's class RefTracker (napi).
-  class Tracker {
+  class TrackerWrap : public Nan::ObjectWrap {
   public:
-    Tracker() = default;
-    virtual ~Tracker() = default;
-    Tracker(const Tracker &other) = delete;
-    Tracker(Tracker &&other) = delete;
-    Tracker& operator=(const Tracker &other) = delete;
-    Tracker& operator=(Tracker &&other) = delete;
+    TrackerWrap() = default;
+    virtual ~TrackerWrap() = default;
+    TrackerWrap(const TrackerWrap &other) = delete;
+    TrackerWrap(TrackerWrap &&other) = delete;
+    TrackerWrap& operator=(const TrackerWrap &other) = delete;
+    TrackerWrap& operator=(TrackerWrap &&other) = delete;
 
-    using TrackerList = Tracker;
+    using TrackerList = TrackerWrap;
 
     // Links 'this' right after 'listStart'
     inline void Link(TrackerList* listStart) {
@@ -37,8 +39,12 @@ namespace nodegit {
       m_next = nullptr;
     }
 
-    inline void SetOwners(std::vector<TrackerList*> owners) {
+    inline void SetOwners(const std::vector<TrackerList*> &owners) {
       m_owners = owners;
+    }
+
+    inline void SetOwners(std::vector<TrackerList*> &&owners) {
+      m_owners = std::move(owners);
     }
 
     inline const std::vector<TrackerList*>& GetOwners() const {

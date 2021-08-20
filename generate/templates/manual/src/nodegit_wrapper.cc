@@ -82,21 +82,29 @@ NAN_METHOD(NodeGitWrapper<Traits>::JSNewFunction) {
 
 template<typename Traits>
 void NodeGitWrapper<Traits>::SetTrackerOwners(v8::Local<v8::Object> owners) {
-  assert(owners->IsArray());
+  assert(owners->IsArray() || owners->IsObject());
 
   Nan::HandleScope scope;
-  v8::Local<v8::Context> context = Nan::GetCurrentContext();
-  const v8::Local<v8::Array> array = owners.As<v8::Array>();
-  uint32_t length = array->Length();
-  std::vector<nodegit::Tracker::TrackerList*> trackOwners {};
+  std::vector<nodegit::TrackerWrap::TrackerList*> trackOwners {};
 
-  for (uint32_t i = 0; i < length; ++i) {
-    v8::Local<v8::Value> v = array->Get(context, i).ToLocalChecked();
-    const v8::Local<v8::Object> o = v.As<v8::Object>();
-    Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(o);
-    trackOwners.push_back(reinterpret_cast<nodegit::Tracker::TrackerList*>(oWrap));
+  if (owners->IsArray()) {
+    v8::Local<v8::Context> context = Nan::GetCurrentContext();
+    const v8::Local<v8::Array> array = owners.As<v8::Array>();
+    uint32_t length = array->Length();
+
+    for (uint32_t i = 0; i < length; ++i) {
+      v8::Local<v8::Value> v = array->Get(context, i).ToLocalChecked();
+      const v8::Local<v8::Object> o = v.As<v8::Object>();
+      Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(o);
+      trackOwners.push_back(static_cast<nodegit::TrackerWrap::TrackerList*>(oWrap));
+    }
   }
-  SetOwners(trackOwners);
+  else if (owners->IsObject()) {
+    Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(owners);
+    trackOwners.push_back(static_cast<nodegit::TrackerWrap::TrackerList*>(oWrap));
+  }
+
+  SetOwners(std::move(trackOwners));
 }
 
 template<typename Traits>
