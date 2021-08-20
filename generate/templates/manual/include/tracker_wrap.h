@@ -2,6 +2,7 @@
 #define TRACKERWRAP_H
 
 #include <nan.h>
+#include <memory>
 
 namespace nodegit {
   // Base class used to track objects.
@@ -39,16 +40,12 @@ namespace nodegit {
       m_next = nullptr;
     }
 
-    inline void SetOwners(const std::vector<TrackerList*> &owners) {
-      m_owners = owners;
-    }
-
-    inline void SetOwners(std::vector<TrackerList*> &&owners) {
+    inline void SetOwners(std::unique_ptr< std::vector<TrackerList*> > &&owners) {
       m_owners = std::move(owners);
     }
 
-    inline const std::vector<TrackerList*>& GetOwners() const {
-      return m_owners;
+    inline const std::vector<TrackerList*>* GetOwners() const {
+      return m_owners.get();
     }
 
     // Deletes 'listStart'
@@ -59,9 +56,9 @@ namespace nodegit {
     }
 
   private:
-    TrackerList* m_next {nullptr};
-    TrackerList* m_prev {nullptr};
-    std::vector<TrackerList*> m_owners {};
+    TrackerList* m_next {};
+    TrackerList* m_prev {};
+    std::unique_ptr< std::vector<TrackerList*> > m_owners {};
   };
 }
 
