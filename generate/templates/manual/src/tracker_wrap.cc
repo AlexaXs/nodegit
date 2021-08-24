@@ -26,8 +26,8 @@ namespace {
 
     inline void AddParent(TrackerWrapTreeNode *parent);
     inline void AddChild(TrackerWrapTreeNode *child);
-    inline void RemoveChild(TrackerWrapTreeNode *child)
-    ;
+    inline void RemoveFromParents();
+    inline void RemoveChild(TrackerWrapTreeNode *child);
 
   private:
     std::unordered_set<TrackerWrapTreeNode *> m_parents {};
@@ -91,6 +91,17 @@ namespace {
   }
 
   /**
+   * TrackerWrapTreeNode::RemoveFromParents()
+   * 
+   * Removes this node from its parents children.
+   */
+  void TrackerWrapTreeNode::RemoveFromParents() {
+    for (TrackerWrapTreeNode *parent : m_parents) {
+      parent->RemoveChild(this);
+    }
+  }
+
+  /**
    * TrackerWrapTreeNode::RemoveChild()
    */
   void TrackerWrapTreeNode::RemoveChild(TrackerWrapTreeNode *child) {
@@ -124,7 +135,7 @@ namespace {
     void addNode(nodegit::TrackerWrap *trackerWrap);
     TrackerWrapTreeNode* addParentNode(nodegit::TrackerWrap *owner, TrackerWrapTreeNode *child);
     void deleteTree(TrackerWrapTreeNode *node);
-    void freeAllChildrenFirst();
+    void freeAllTreesChildrenFirst();
 
     using TrackerWrapTreeNodeMap = std::unordered_map<nodegit::TrackerWrap*, std::unique_ptr<TrackerWrapTreeNode>>;
 
@@ -152,7 +163,7 @@ namespace {
   * TrackerWrapTrees::~TrackerWrapTrees
   */
   TrackerWrapTrees::~TrackerWrapTrees() {
-    freeAllChildrenFirst();
+    freeAllTreesChildrenFirst();
   }
 
   /**
@@ -204,33 +215,38 @@ namespace {
   /**
    * TrackerWrapTrees::deleteTree
    * 
-   * Delete children-first in a recursive way.
+   * Deletes the tree held below the node passed as a parameter
+   * in a children-first way and recursively.
    * 
-   * \param node node of the tree to delete.
+   * \param node node from where to delete all its children and itself.
    */
   void TrackerWrapTrees::deleteTree(TrackerWrapTreeNode *node)
   {
     const std::unordered_set<TrackerWrapTreeNode *> &children = node->Children();
 
-    if (children.empty()) {
-      m_mapTrackerWrapNode->erase(node->TrackerWrap());
+    // delete children first
+    for (TrackerWrapTreeNode *child : children) {
+      deleteTree(child);
     }
-    else {
-      for (TrackerWrapTreeNode *child : children) {
-        // remove child node from all its parents, to prevent multiple deletion
 
-        node->RemoveChild(child);
-        deleteTree(child);
-      }
+    // then deletes itself if no children left
+    if (children.empty()) {
+      // remove 'node' from the children list of its parents, to prevent
+      // multiple deletions
+      node->RemoveFromParents();
+
+      // erase from the container, which will actually
+      // free 'node' and the TrackerWrap object it holds
+      m_mapTrackerWrapNode->erase(node->TrackerWrap());
     }
   }
 
   /**
-   * TrackerWrapTrees::freeAllChildrenFirst
+   * TrackerWrapTrees::freeAllTreesChildrenFirst
    * 
    * Deletes all the trees held in a children-first way.
    */
-  void TrackerWrapTrees::freeAllChildrenFirst() {
+  void TrackerWrapTrees::freeAllTreesChildrenFirst() {
     for (TrackerWrapTreeNode *tree : m_roots) {
       deleteTree(tree);
     }
