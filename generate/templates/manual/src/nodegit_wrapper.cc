@@ -84,8 +84,8 @@ template<typename Traits>
 void NodeGitWrapper<Traits>::SetTrackerOwners(v8::Local<v8::Object> owners) {
   assert(owners->IsArray() || owners->IsObject());
   Nan::HandleScope scope;
-  std::unique_ptr< std::vector<nodegit::TrackerWrap::TrackerList*> > trackOwners = 
-    std::make_unique< std::vector<nodegit::TrackerWrap::TrackerList*> >();
+  std::unique_ptr< std::vector<nodegit::TrackerWrap*> > trackOwners = 
+    std::make_unique< std::vector<nodegit::TrackerWrap*> >();
 
   if (owners->IsArray()) {
     v8::Local<v8::Context> context = Nan::GetCurrentContext();
@@ -96,12 +96,12 @@ void NodeGitWrapper<Traits>::SetTrackerOwners(v8::Local<v8::Object> owners) {
       v8::Local<v8::Value> v = array->Get(context, i).ToLocalChecked();
       const v8::Local<v8::Object> o = v.As<v8::Object>();
       Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(o);
-      trackOwners->push_back(static_cast<nodegit::TrackerWrap::TrackerList*>(oWrap));
+      trackOwners->push_back(static_cast<nodegit::TrackerWrap*>(oWrap));
     }
   }
   else if (owners->IsObject()) {
     Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(owners);
-    trackOwners->push_back(static_cast<nodegit::TrackerWrap::TrackerList*>(oWrap));
+    trackOwners->push_back(static_cast<nodegit::TrackerWrap*>(oWrap));
   }
 
   SetOwners(std::move(trackOwners));

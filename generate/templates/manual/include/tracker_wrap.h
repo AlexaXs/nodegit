@@ -16,6 +16,9 @@ namespace nodegit {
     TrackerWrap& operator=(const TrackerWrap &other) = delete;
     TrackerWrap& operator=(TrackerWrap &&other) = delete;
 
+    // alias:
+    // 'TrackerList': used for functionality related to a list.
+    // 'TrackerWrap' used for functionality not related to a list.
     using TrackerList = TrackerWrap;
 
     // Links 'this' right after 'listStart'
@@ -29,7 +32,7 @@ namespace nodegit {
     }
 
     // Unlinks itself
-    inline void Unlink() {
+    inline TrackerWrap* Unlink() {
       if (m_prev != nullptr) {
         m_prev->m_next = m_next;
       }
@@ -38,27 +41,24 @@ namespace nodegit {
       }
       m_prev = nullptr;
       m_next = nullptr;
+      return this;
     }
 
-    inline void SetOwners(std::unique_ptr< std::vector<TrackerList*> > &&owners) {
+    inline void SetOwners(std::unique_ptr< std::vector<TrackerWrap*> > &&owners) {
       m_owners = std::move(owners);
     }
 
-    inline const std::vector<TrackerList*>* GetOwners() const {
+    inline const std::vector<TrackerWrap*>* GetOwners() const {
       return m_owners.get();
     }
 
     // Deletes 'listStart'
-    static void DeleteAll(TrackerList* listStart) {
-      while (listStart->m_next != nullptr) {
-        delete listStart->m_next;
-      }
-    }
+    static void DeleteAll(TrackerList* listStart);
 
   private:
     TrackerList* m_next {};
     TrackerList* m_prev {};
-    std::unique_ptr< std::vector<TrackerList*> > m_owners {};
+    std::unique_ptr< std::vector<TrackerWrap*> > m_owners {};
   };
 }
 
