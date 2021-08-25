@@ -167,10 +167,15 @@ namespace {
    */
   void TrackerWrapTrees::addNode(nodegit::TrackerWrap *trackerWrap) {
     // add trackerWrap as a node
-    auto emplacePair = m_mapTrackerWrapNode.emplace(std::make_pair(
-      trackerWrap, std::make_unique<TrackerWrapTreeNode>(trackerWrap)));
-
-    TrackerWrapTreeNode *addedNode = emplacePair.first->second.get();
+    // NOTE: emplace will create a temporal TrackerWrapTreeNode and will
+    // free it if trackerWrap already exists as a key. To prevent freeing
+    // the node at this moment we have to find it first.
+    auto addedNodeIter = m_mapTrackerWrapNode.find(trackerWrap);
+    if (addedNodeIter == m_mapTrackerWrapNode.end()) {
+      addedNodeIter = m_mapTrackerWrapNode.emplace(std::make_pair(
+        trackerWrap, std::make_unique<TrackerWrapTreeNode>(trackerWrap))).first;
+    }
+    TrackerWrapTreeNode *addedNode = addedNodeIter->second.get();
 
     // if trackerWrap has no owners, add it as a root node
     const std::vector<nodegit::TrackerWrap*> *owners = trackerWrap->GetTrackerOwners();
@@ -195,11 +200,17 @@ namespace {
     TrackerWrapTreeNode *child)
   {
     // adds a new parent node (holding the owner)
-    TrackerWrapTreeNodeMap::iterator itAdded = m_mapTrackerWrapNode.emplace(std::make_pair(
-      owner, std::make_unique<TrackerWrapTreeNode>(owner))).first;
+    // NOTE: emplace will create a temporal TrackerWrapTreeNode and will
+    // free it if trackerWrap already exists as a key. To prevent freeing
+    // the node at this moment we have to find it first.
+    auto addedParentNodeIter = m_mapTrackerWrapNode.find(owner);
+    if (addedParentNodeIter == m_mapTrackerWrapNode.end()) {
+      addedParentNodeIter = m_mapTrackerWrapNode.emplace(std::make_pair(
+        owner, std::make_unique<TrackerWrapTreeNode>(owner))).first;
+    }
+    TrackerWrapTreeNode *addedParentNode = addedParentNodeIter->second.get();
 
     // links parent to child
-    TrackerWrapTreeNode *addedParentNode = itAdded->second.get();
     addedParentNode->AddChild(child);
 
     return addedParentNode;
