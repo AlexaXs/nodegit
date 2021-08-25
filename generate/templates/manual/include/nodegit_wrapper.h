@@ -71,7 +71,7 @@ protected:
   static NAN_METHOD(GetSelfFreeingInstanceCount);
   static NAN_METHOD(GetNonSelfFreeingConstructedCount);
 
-  void SetTrackerOwners(v8::Local<v8::Object> owners);
+  void SetNativeOwners(v8::Local<v8::Object> owners);
 
 public:
   static v8::Local<v8::Value> New(const cType *raw, bool selfFreeing, v8::Local<v8::Object> owner = v8::Local<v8::Object>());

@@ -20,16 +20,16 @@ namespace {
     TrackerWrapTreeNode& operator=(const TrackerWrapTreeNode &other) = delete;
     TrackerWrapTreeNode& operator=(TrackerWrapTreeNode &&other) = delete;
 
-    inline const std::unordered_set<TrackerWrapTreeNode *>& Parents() const;
     inline const std::unordered_set<TrackerWrapTreeNode *>& Children() const;
     inline nodegit::TrackerWrap* TrackerWrap();
 
     inline void AddParent(TrackerWrapTreeNode *parent);
     inline void AddChild(TrackerWrapTreeNode *child);
     inline void RemoveFromParents();
-    inline void RemoveChild(TrackerWrapTreeNode *child);
 
   private:
+    inline void removeChild(TrackerWrapTreeNode *child);
+
     std::unordered_set<TrackerWrapTreeNode *> m_parents {};
     std::unordered_set<TrackerWrapTreeNode *> m_children {};
     nodegit::TrackerWrap *m_trackerWrap {};
@@ -44,15 +44,6 @@ namespace {
     if (m_trackerWrap != nullptr) {
       delete m_trackerWrap;
     }
-  }
-
-  /**
-   * TrackerWrapTreeNode::Parents()
-   * 
-   * Returns a reference to the parents of this node.
-   */
-  const std::unordered_set<TrackerWrapTreeNode *>& TrackerWrapTreeNode::Parents() const {
-    return m_parents;
   }
 
   /**
@@ -97,14 +88,14 @@ namespace {
    */
   void TrackerWrapTreeNode::RemoveFromParents() {
     for (TrackerWrapTreeNode *parent : m_parents) {
-      parent->RemoveChild(this);
+      parent->removeChild(this);
     }
   }
 
   /**
-   * TrackerWrapTreeNode::RemoveChild()
+   * TrackerWrapTreeNode::removeChild()
    */
-  void TrackerWrapTreeNode::RemoveChild(TrackerWrapTreeNode *child) {
+  void TrackerWrapTreeNode::removeChild(TrackerWrapTreeNode *child) {
     assert(child != nullptr);
     m_children.erase(child);
   }
@@ -113,8 +104,10 @@ namespace {
   /**
    * \class TrackerWrapTrees
    * 
-   * Class holding a group of independent TrackerWrap trees, where for each
-   * tree, owner objects will be in the parent nodes of the nodes for the owned ones.
+   * Class containing a list of trees with nodes holding TrackerWrap objects.
+   * For a TrackerWrap object 'P' which owns another TrackerWrap object 'C',
+   * 'P' will be held in a node which will be the parent of the child node
+   * that holds 'C'.
    * On destruction, nodes will be freed in a children-first way.
    * 
    * NOTE: code previous to this change is prepared to manage an array of owners,
@@ -146,8 +139,8 @@ namespace {
   /**
    * TrackerWrapTrees::TrackerWrapTrees(nodegit::TrackerList *trackerList)
    * 
-   * Unlinks items from trackerList and adds them to one tree.
-   * For each root (TrackerWrap item without owners) it will add a new tree.
+   * Unlinks items from trackerList and adds them to a tree.
+   * For each root (TrackerWrap item without owners) it add a new tree root.
    * 
    * \param trackerList TrackerList pointer from which the TrackerWrapTrees object will be created.
    */
@@ -169,24 +162,24 @@ namespace {
   /**
    * TrackerWrapTrees::addNode
    * 
-   * \param trackerWrap pointer to the TrackerWrap object to add to a tree.
+   * \param trackerWrap pointer to the TrackerWrap object to add as a node in a tree.
    */
   void TrackerWrapTrees::addNode(nodegit::TrackerWrap *trackerWrap) {
     // add trackerWrap as a node
     auto emplacePair = m_mapTrackerWrapNode.emplace(std::make_pair(
       trackerWrap, std::make_unique<TrackerWrapTreeNode>(trackerWrap)));
 
-    TrackerWrapTreeNode *newNode = emplacePair.first->second.get();
+    TrackerWrapTreeNode *addedNode = emplacePair.first->second.get();
 
     // if trackerWrap has no owners, add it as a root node
-    const std::vector<nodegit::TrackerWrap*> *owners = trackerWrap->GetOwners();
+    const std::vector<nodegit::TrackerWrap*> *owners = trackerWrap->GetTrackerOwners();
     if (owners == nullptr) {
-      m_roots.emplace(newNode);
+      m_roots.emplace(addedNode);
     }
     else {
-      // add newNode's owners
-      for (nodegit::TrackerWrap *o : *owners) {
-        newNode->AddParent(addParentNode(o, trackerWrap));
+      // add addedNode's owners and link child to parent
+      for (nodegit::TrackerWrap *owner : *owners) {
+        addedNode->AddParent(addParentNode(owner, trackerWrap));
       }
     }
   }
@@ -194,7 +187,7 @@ namespace {
   /**
    * TrackerWrapTrees::addParentNode
    * 
-   * \param owner TrackerWrap pointer for the new parent node to add.
+   * \param owner TrackerWrap pointer to the new parent node to add.
    * \param child TrackerWrapTreeNode pointer to be the child node of the new parent node to add.
    */
   TrackerWrapTreeNode* TrackerWrapTrees::addParentNode(nodegit::TrackerWrap *owner,
@@ -204,18 +197,17 @@ namespace {
     TrackerWrapTreeNodeMap::iterator itAdded = m_mapTrackerWrapNode.emplace(std::make_pair(
       owner, std::make_unique<TrackerWrapTreeNode>(owner))).first;
 
-    // adds child to the parent
-    TrackerWrapTreeNode *parentNode = itAdded->second.get();
-    parentNode->AddChild(child);
+    // links parent to child
+    TrackerWrapTreeNode *addedParentNode = itAdded->second.get();
+    addedParentNode->AddChild(child);
 
-    // return the added parent node
-    return parentNode;
+    return addedParentNode;
   }
 
   /**
    * TrackerWrapTrees::deleteTree
    * 
-   * Deletes the tree held below the node passed as a parameter
+   * Deletes the tree that has the node passed as parameter as root,
    * in a children-first way and recursively.
    * 
    * \param node node from where to delete all its children and itself.
@@ -244,24 +236,21 @@ namespace {
   /**
    * TrackerWrapTrees::freeAllTreesChildrenFirst
    * 
-   * Deletes all the trees held in a children-first way.
+   * Deletes all the trees held, in a children-first way.
    */
   void TrackerWrapTrees::freeAllTreesChildrenFirst() {
     for (TrackerWrapTreeNode *tree : m_roots) {
       deleteTree(tree);
     }
+    m_roots.clear();
   }
 } // end anonymous namespace
 
 
 namespace nodegit {
-  void TrackerWrap::DeleteAll(TrackerList* listStart) {
+  void TrackerWrap::DeleteFromList(TrackerList* listStart) {
     // creates an object TrackerWrapTrees, which will free
     // the nodes of its trees in a children-first way
     TrackerWrapTrees trackerWrapTrees(listStart);
-
-    // while (listStart->m_next != nullptr) {
-    //   delete listStart->m_next;
-    // }
   }
 }
