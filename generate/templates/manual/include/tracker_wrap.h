@@ -54,13 +54,13 @@ namespace nodegit {
     }
 
     // Unlinks and returns the first item of 'listStart'
-    inline static TrackerWrap* UnlinkFirst(TrackerList* listStart) {
+    static TrackerWrap* UnlinkFirst(TrackerList* listStart) {
       assert(listStart != nullptr);
       return listStart->m_next == nullptr ? nullptr : listStart->m_next->Unlink();
     }
 
     // Deletes items following 'listStart', but not 'listStart' itself
-    inline static void DeleteFromList(TrackerList* listStart);
+    static void DeleteFromList(TrackerList* listStart);
 
   private:
     TrackerList* m_next {};
