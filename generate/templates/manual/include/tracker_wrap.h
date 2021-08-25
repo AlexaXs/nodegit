@@ -3,6 +3,7 @@
 
 #include <nan.h>
 #include <memory>
+#include <vector>
 
 namespace nodegit {
   // Base class used to track objects.
@@ -52,8 +53,14 @@ namespace nodegit {
       return m_owners.get();
     }
 
+    // Unlinks and returns the first item of 'listStart'
+    inline static TrackerWrap* UnlinkFirst(TrackerList* listStart) {
+      assert(listStart != nullptr);
+      return listStart->m_next == nullptr ? nullptr : listStart->m_next->Unlink();
+    }
+
     // Deletes items following 'listStart', but not 'listStart' itself
-    static void DeleteFromList(TrackerList* listStart);
+    inline static void DeleteFromList(TrackerList* listStart);
 
   private:
     TrackerList* m_next {};
