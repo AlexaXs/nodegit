@@ -6,7 +6,9 @@
 #include <vector>
 
 namespace nodegit {
-  // Base class used to track objects.
+  // Base class used to track wrapped objects, so that we can
+  // free the objects that were not freed (because their
+  // WeakCallback didn't trigger) at the time of context closing.
   // Implementation based on node.js's class RefTracker (napi).
   class TrackerWrap : public Nan::ObjectWrap {
   public:
@@ -18,8 +20,8 @@ namespace nodegit {
     TrackerWrap& operator=(TrackerWrap &&other) = delete;
 
     // aliases:
-    // 'TrackerList': used for functionality related to a list.
-    // 'TrackerWrap' used for functionality not related to a list.
+    // 'TrackerList': used in functionality related to a list.
+    // 'TrackerWrap' used in functionality not related to a list.
     using TrackerList = TrackerWrap;
 
     // Links 'this' right after 'listStart'
@@ -45,11 +47,11 @@ namespace nodegit {
       return this;
     }
 
-    inline void SetTrackerOwners(std::unique_ptr< std::vector<TrackerWrap*> > &&owners) {
+    inline void SetTrackerWrapOwners(std::unique_ptr< std::vector<TrackerWrap*> > &&owners) {
       m_owners = std::move(owners);
     }
 
-    inline const std::vector<TrackerWrap*>* GetTrackerOwners() const {
+    inline const std::vector<TrackerWrap*>* GetTrackerWrapOwners() const {
       return m_owners.get();
     }
 

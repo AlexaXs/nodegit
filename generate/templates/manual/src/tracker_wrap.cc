@@ -23,12 +23,9 @@ namespace {
 
     inline const std::unordered_set<TrackerWrapTreeNode *>& Children() const;
     inline nodegit::TrackerWrap* TrackerWrap();
-
-    inline void AddParent(TrackerWrapTreeNode *parent);
     inline void AddChild(TrackerWrapTreeNode *child);
 
   private:
-    std::unordered_set<TrackerWrapTreeNode *> m_parents {};
     std::unordered_set<TrackerWrapTreeNode *> m_children {};
     nodegit::TrackerWrap *m_trackerWrap {};
   };
@@ -62,19 +59,9 @@ namespace {
   }
 
   /**
-   * TrackerWrapTreeNode::AddParent()
-   */
-  void TrackerWrapTreeNode::AddParent(TrackerWrapTreeNode *parent) {
-    assert(parent != nullptr);
-    m_parents.insert(parent)
-    ;
-  }
-
-  /**
    * TrackerWrapTreeNode::AddChild()
    */
   void TrackerWrapTreeNode::AddChild(TrackerWrapTreeNode *child) {
-    assert(child != nullptr);
     m_children.insert(child);
   }
 
@@ -103,7 +90,7 @@ namespace {
 
   private:
     void addNode(nodegit::TrackerWrap *trackerWrap);
-    TrackerWrapTreeNode* addParentNode(nodegit::TrackerWrap *owner, TrackerWrapTreeNode *child);
+    void addParentNode(nodegit::TrackerWrap *owner, TrackerWrapTreeNode *child);
     void deleteTree(TrackerWrapTreeNode *node);
     void freeAllTreesChildrenFirst();
 
@@ -117,7 +104,7 @@ namespace {
    * TrackerWrapTrees::TrackerWrapTrees(nodegit::TrackerWrap::TrackerList *trackerList)
    * 
    * Unlinks items from trackerList and adds them to a tree.
-   * For each root (TrackerWrap item without owners) it add a new tree root.
+   * For each root (TrackerWrap item without owners), it adds a new tree root.
    * 
    * \param trackerList TrackerList pointer from which the TrackerWrapTrees object will be created.
    */
@@ -143,7 +130,7 @@ namespace {
    */
   void TrackerWrapTrees::addNode(nodegit::TrackerWrap *trackerWrap) {
     // add trackerWrap as a node
-    // NOTE: emplace will create a temporal TrackerWrapTreeNode and will
+    // NOTE: 'emplace' will create a temporal TrackerWrapTreeNode and will
     // free it if trackerWrap already exists as a key. To prevent freeing
     // the node at this moment we have to find it first.
     auto addedNodeIter = m_mapTrackerWrapNode.find(trackerWrap);
@@ -154,14 +141,14 @@ namespace {
     TrackerWrapTreeNode *addedNode = addedNodeIter->second.get();
 
     // if trackerWrap has no owners, add it as a root node
-    const std::vector<nodegit::TrackerWrap*> *owners = trackerWrap->GetTrackerOwners();
+    const std::vector<nodegit::TrackerWrap*> *owners = trackerWrap->GetTrackerWrapOwners();
     if (owners == nullptr) {
       m_roots.push_back(addedNode);
     }
     else {
-      // add addedNode's owners and link child to parent
+      // add addedNode's parents and link them with this child
       for (nodegit::TrackerWrap *owner : *owners) {
-        addedNode->AddParent(addParentNode(owner, addedNode));
+        addParentNode(owner, addedNode);
       }
     }
   }
@@ -169,14 +156,13 @@ namespace {
   /**
    * TrackerWrapTrees::addParentNode
    * 
-   * \param owner TrackerWrap pointer to the new parent node to add.
+   * \param owner TrackerWrap pointer for the new parent node to add.
    * \param child TrackerWrapTreeNode pointer to be the child node of the new parent node to add.
    */
-  TrackerWrapTreeNode* TrackerWrapTrees::addParentNode(nodegit::TrackerWrap *owner,
-    TrackerWrapTreeNode *child)
+  void TrackerWrapTrees::addParentNode(nodegit::TrackerWrap *owner, TrackerWrapTreeNode *child)
   {
     // adds a new parent node (holding the owner)
-    // NOTE: emplace will create a temporal TrackerWrapTreeNode and will
+    // NOTE: 'emplace' will create a temporal TrackerWrapTreeNode and will
     // free it if trackerWrap already exists as a key. To prevent freeing
     // the node at this moment we have to find it first.
     auto addedParentNodeIter = m_mapTrackerWrapNode.find(owner);
@@ -188,21 +174,19 @@ namespace {
 
     // links parent to child
     addedParentNode->AddChild(child);
-
-    return addedParentNode;
   }
 
   /**
    * TrackerWrapTrees::deleteTree
    * 
-   * Deletes the tree that has the node passed as parameter as root,
+   * Deletes the tree from the node passed as a parameter
    * in a children-first way and recursively.
    * 
    * \param node node from where to delete all its children and itself.
    */
   void TrackerWrapTrees::deleteTree(TrackerWrapTreeNode *node)
   {
-    // delete all children first
+    // delete all node's children first
     const std::unordered_set<TrackerWrapTreeNode *> &children = node->Children();
     for (TrackerWrapTreeNode *child : children) {
       // check that child hasn't been removed previously by another parent

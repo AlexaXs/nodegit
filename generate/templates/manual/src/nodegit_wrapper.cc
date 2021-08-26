@@ -93,18 +93,18 @@ void NodeGitWrapper<Traits>::SetNativeOwners(v8::Local<v8::Object> owners) {
     uint32_t length = array->Length();
 
     for (uint32_t i = 0; i < length; ++i) {
-      v8::Local<v8::Value> v = array->Get(context, i).ToLocalChecked();
-      const v8::Local<v8::Object> o = v.As<v8::Object>();
-      Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(o);
-      trackerOwners->push_back(static_cast<nodegit::TrackerWrap*>(oWrap));
+      v8::Local<v8::Value> value = array->Get(context, i).ToLocalChecked();
+      const v8::Local<v8::Object> object = value.As<v8::Object>();
+      Nan::ObjectWrap *objectWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(object);
+      trackerOwners->push_back(static_cast<nodegit::TrackerWrap*>(objectWrap));
     }
   }
   else if (owners->IsObject()) {
-    Nan::ObjectWrap *oWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(owners);
-    trackerOwners->push_back(static_cast<nodegit::TrackerWrap*>(oWrap));
+    Nan::ObjectWrap *objectWrap = Nan::ObjectWrap::Unwrap<Nan::ObjectWrap>(owners);
+    trackerOwners->push_back(static_cast<nodegit::TrackerWrap*>(objectWrap));
   }
 
-  SetTrackerOwners(std::move(trackerOwners));
+  SetTrackerWrapOwners(std::move(trackerOwners));
 }
 
 template<typename Traits>
