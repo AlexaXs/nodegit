@@ -55,7 +55,7 @@ namespace nodegit {
 
     void ShutdownThreadPool(std::unique_ptr<AsyncContextCleanupHandle> cleanupHandle);
 
-    inline void LinkToTrackerList(nodegit::TrackerWrap::TrackerList *list) {
+    inline void LinkTrackerList(nodegit::TrackerWrap::TrackerList *list) {
       list->Link(&trackerList);
     }
 

@@ -1,7 +1,7 @@
 template<typename Traits>
 NodeGitWrapper<Traits>::NodeGitWrapper(typename Traits::cType *raw, bool selfFreeing, v8::Local<v8::Object> owner)
   : nodegitContext(nodegit::Context::GetCurrentContext()) {
-  nodegitContext->LinkToTrackerList(this);
+  nodegitContext->LinkTrackerList(this);
   if (Traits::isSingleton) {
     ReferenceCounter::incrementCountForPointer((void *)raw);
     this->raw = raw;
