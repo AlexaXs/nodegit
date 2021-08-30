@@ -84,5 +84,42 @@ if (Worker) {
         });
       });
     }
+
+    it.only("can free objects on context shutdown", function(done) {
+      console.log("memory usage before\n", process.memoryUsage());
+      console.log("main process.pid: ", process.pid, " and ppid: ",
+        process.ppid);
+      const workerPath = local("../utils/worker_context_aware.js");
+      const worker = new Worker(workerPath, {
+        workerData: {
+          clonePath,
+          url: "https://github.com/nodegit/test.git"
+        }
+      });
+      worker.on("message", (message) => {
+        switch (message) {
+          case "init":
+            break;
+          case "success":
+            worker.terminate();
+            break;
+          case "failure":
+            assert.fail();
+            break;
+        }
+      });
+      worker.on("error", () => assert.fail());
+      worker.on("exit", (code) => {
+        if (code === 1) {
+          console.log("memory usage on worker exit1\n", process.memoryUsage());
+          done();
+          console.log("memory usage on worker exit2\n", process.memoryUsage());
+        } else {
+          assert.fail();
+        }
+      });
+
+      console.log("memory usage after\n", process.memoryUsage());
+    });
   });
 }
