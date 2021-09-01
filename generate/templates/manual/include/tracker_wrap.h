@@ -5,6 +5,8 @@
 #include <memory>
 #include <vector>
 
+#include <iostream>
+
 namespace nodegit {
   // Base class used to track wrapped objects, so that we can
   // free the objects that were not freed (because their
@@ -63,6 +65,21 @@ namespace nodegit {
 
     // Deletes items following 'listStart', but not 'listStart' itself
     static void DeleteFromList(TrackerList* listStart);
+    
+    static void testToDeletePrint(TrackerList* listStart) {
+      TrackerList *t {listStart};
+      while (t->m_next != nullptr) {
+        t = t->m_next;
+        std::cout << t << "(owners: ";
+        const std::vector<TrackerWrap*> *owners = t->GetTrackerWrapOwners();
+        if (owners != nullptr) {
+          for (TrackerWrap *o : *owners) {
+            std::cout << o << " ";
+          }
+        }
+        std::cout << "); ";
+      }
+    }
 
   private:
     TrackerList* m_next {};

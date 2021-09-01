@@ -45,6 +45,8 @@ namespace nodegit {
       list->Link(&trackerList);
     }
 
+    void testToDeletePrint() { nodegit::TrackerWrap::testToDeletePrint(&trackerList); }
+
   private:
     v8::Isolate *isolate;
 

@@ -1,6 +1,9 @@
+#include <iostream>
+
 template<typename Traits>
 NodeGitWrapper<Traits>::NodeGitWrapper(typename Traits::cType *raw, bool selfFreeing, v8::Local<v8::Object> owner)
   : nodegitContext(nodegit::Context::GetCurrentContext()) {
+  // std::cout << "::" << Traits::className() << "() " << this /*<< " raw: " << raw*/ << std::endl;
   nodegitContext->LinkTrackerList(this);
   if (Traits::isSingleton) {
     ReferenceCounter::incrementCountForPointer((void *)raw);
@@ -35,6 +38,8 @@ NodeGitWrapper<Traits>::NodeGitWrapper(typename Traits::cType *raw, bool selfFre
   } else {
     NonSelfFreeingConstructedCount++;
   }
+
+  // nodegitContext->testToDeletePrint();
 }
 
 template<typename Traits>
@@ -47,12 +52,16 @@ NodeGitWrapper<Traits>::NodeGitWrapper(const char *error)
 
 template<typename Traits>
 NodeGitWrapper<Traits>::~NodeGitWrapper() {
+  // std::cout << "::~" << Traits::className() << "() " << this /*<< " raw: " << raw*/ << std::endl;
+
   Unlink();
   if (Traits::isFreeable && selfFreeing) {
     Traits::free(raw);
     SelfFreeingInstanceCount--;
     raw = NULL;
   }
+
+  // nodegitContext->testToDeletePrint();
 }
 
 template<typename Traits>
