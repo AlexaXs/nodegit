@@ -84,5 +84,65 @@ if (Worker) {
         });
       });
     }
+
+    // NOTE: first try was to build a test measuring memory used, showing that
+    // memory allocated by objects was being freed, but it was problematic to
+    // obtain the memory freed by a different context (a worker) after the
+    // context was gone. So instead this test was implemented, which checks
+    //that  the count of objects created/destroyed during the test match the
+    // count of objects being tracked by the nodegit::Context, which will be
+    // destroyed on context shutdown. The fact that they are actually being
+    // freed can be checked with the debugger.
+    it.only("can track objects to free on context shutdown", function(done) {
+      // garbageCollect();
+      // garbageCollect();
+      // garbageCollect();
+
+      let testOk;
+
+      console.log("START MAIN\n");
+     
+
+      const workerPath = local("../utils/worker_context_aware.js");
+      const worker = new Worker(workerPath, {
+        workerData: {
+          clonePath,
+          url: "https://github.com/nodegit/test.git"
+        }
+      });
+      worker.on("message", (message) => {
+        switch (message) {
+          case "init":
+            console.log("init received\n");
+            break;
+          case "numbersMatch":
+            testOk = true;
+            worker.terminate();
+            break;
+          case "numbersDoNotMatch":
+            testOk = false;
+            worker.terminate();
+            break;
+          case "success":
+            // worker.terminate();
+            console.log("success received\n");
+            break;
+          case "failure":
+            console.log("failure received\n");
+            assert.fail();
+            break;
+        }
+      });
+      worker.on("error", () => assert.fail());
+      worker.on("exit", (code) => {
+        if (code === 1 && testOk === true) {
+          done();
+        }
+        else {
+          assert.fail();
+        }
+      });
+      console.log("MAIN'S HERE");
+    });
   });
 }
