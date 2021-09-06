@@ -215,7 +215,23 @@ namespace {
 
 
 namespace nodegit {
-  void TrackerWrap::DeleteFromList(TrackerList* listStart) {
+  TrackerWrap* TrackerWrap::UnlinkFirst(TrackerList *listStart) {
+    assert(listStart != nullptr);
+    return listStart->m_next == nullptr ? nullptr : listStart->m_next->Unlink();
+  }
+
+  int TrackerWrap::SizeFromList(TrackerList *listStart) {
+    assert(listStart != nullptr);
+    TrackerList *t {listStart};
+    int count {0};
+    while (t->m_next != nullptr) {
+      ++count;
+      t = t->m_next;
+    }
+    return count;
+  }
+
+  void TrackerWrap::DeleteFromList(TrackerList *listStart) {
     assert(listStart != nullptr);
     // creates an object TrackerWrapTrees, which will free
     // the nodes of its trees in a children-first way

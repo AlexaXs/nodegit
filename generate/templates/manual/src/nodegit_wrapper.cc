@@ -150,9 +150,16 @@ NAN_METHOD(NodeGitWrapper<Traits>::GetNonSelfFreeingConstructedCount) {
 }
 
 template<typename Traits>
+NAN_METHOD(NodeGitWrapper<Traits>::GetTotalOfTrackedObjects) {
+  nodegit::Context *currentNodeGitContext = nodegit::Context::GetCurrentContext();
+  info.GetReturnValue().Set(currentNodeGitContext->TrackerListSize());
+}
+
+template<typename Traits>
 void NodeGitWrapper<Traits>::InitializeTemplate(v8::Local<v8::FunctionTemplate> &tpl) {
   Nan::SetMethod(tpl, "getSelfFreeingInstanceCount", GetSelfFreeingInstanceCount);
   Nan::SetMethod(tpl, "getNonSelfFreeingConstructedCount", GetNonSelfFreeingConstructedCount);
+  Nan::SetMethod(tpl, "getTotalOfTrackedObjects", GetTotalOfTrackedObjects);
 }
 
 template<typename Traits>

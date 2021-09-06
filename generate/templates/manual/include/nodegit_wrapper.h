@@ -68,8 +68,10 @@ protected:
 
   static NAN_METHOD(JSNewFunction);
 
+  // diagnostic static methods
   static NAN_METHOD(GetSelfFreeingInstanceCount);
   static NAN_METHOD(GetNonSelfFreeingConstructedCount);
+  static NAN_METHOD(GetTotalOfTrackedObjects);
 
   void SetNativeOwners(v8::Local<v8::Object> owners);
 
