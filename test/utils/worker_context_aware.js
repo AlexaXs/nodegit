@@ -40,31 +40,58 @@ return NodeGit.Clone(url, clonePath, opts)
 
   history.on("commit", function(commit) {
     // number of commits is known to be higher than 200
-    if (++historyCount == 1) { //200) {
+    if (++historyCount == 10) {//200) {
+      // Tracked objects must work as well when
+      // the Garbage Collector is triggered
       garbageCollect();
 
-      // count
-      // var selfFreeingCount =
-      //   // NodeGit.GitCert.getSelfFreeingInstanceCount() +
-      //   NodeGit.Repository.getSelfFreeingInstanceCount();// +
-      //   // NodeGit.GitCommit.getSelfFreeingInstanceCount() +
-      //   // NodeGit.GitOid.getSelfFreeingInstanceCount() +
-      //   // NodeGit.GitRevwalk.getSelfFreeingInstanceCount();
+
+      // const countCert =
+      // //getSelfFreeingInstanceCount();
+      //   NodeGit.Cert.getNonSelfFreeingConstructedCount();
+      // const countRepo =
+      //   NodeGit.Repository.getSelfFreeingInstanceCount();
+      // const countCommit =
+      //   NodeGit.Commit.getSelfFreeingInstanceCount();
+      // const countOid =
+      //   NodeGit.Oid.getSelfFreeingInstanceCount();
+      // const countRevwalk =
+      //   NodeGit.Revwalk.getSelfFreeingInstanceCount();
+
+
+      // count total of objects left after being
+      // created/destroyed
+      const selfFreeingCount =
+        NodeGit.Cert.getNonSelfFreeingConstructedCount() +
+        NodeGit.Repository.getSelfFreeingInstanceCount() +
+        NodeGit.Commit.getSelfFreeingInstanceCount() +
+        NodeGit.Oid.getSelfFreeingInstanceCount() +
+        NodeGit.Revwalk.getSelfFreeingInstanceCount();
 
       // NOTE: getTotalOfTrackedObjects() can be called from any NodeGitWrapper
-      // object.
-      // The reason is it obtains the information from nodegit::Context, which
-      // is not accessible from javascript.
-      var totalTrackedObjects = NodeGit.Repository.getTotalOfTrackedObjects();
-      // console.log("selfFreeingCount objects: ", selfFreeingCount);
-      console.log("tracked objects: ", totalTrackedObjects);
+      // object. The reason is it obtains the information from
+      // nodegit::Context, which is not accessible from javascript.
+      const totalTrackedObjects = NodeGit.Repository.getTotalOfTrackedObjects();
 
-      // if (selfFreeingCount === totalTrackedObjects) {
+      // console.log(
+      //   "countCert: ", countCert,
+      //   "countRepo: ", countRepo,
+      //   "countCommit: ", countCommit,
+      //   "countOid: ", countOid,
+      //   "countRevwalk: ", countRevwalk,
+      //   "tracked objects: ", NodeGit.Repository.getTotalOfTrackedObjects());
+
+
+      console.log(
+        "selfFreeingCount objects: ", selfFreeingCount,
+        "tracked objects: ", NodeGit.Repository.getTotalOfTrackedObjects());
+
+      if (selfFreeingCount === totalTrackedObjects) {
         parentPort.postMessage("numbersMatch");
-      // }
-      // else {
-      //   parentPort.postMessage("numbersDoNotMatch");
-      // }
+      }
+      else {
+        parentPort.postMessage("numbersDoNotMatch");
+      }
     }
   });
 

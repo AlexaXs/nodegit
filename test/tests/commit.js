@@ -9,6 +9,12 @@ var local = path.join.bind(path, __dirname);
 
 var exec = require("../../utils/execPromise");
 
+function delay(t, v) {
+  return new Promise(function(resolve) { 
+      setTimeout(resolve.bind(null, v), t);
+  });
+}
+
 describe("Commit", function() {
   var NodeGit = require("../../");
   var Repository = NodeGit.Repository;
@@ -20,8 +26,13 @@ describe("Commit", function() {
   var newRepoPath = local("../repos/new");
   var oid = "fce88902e66c72b5b93e75bdb5ae717038b221f6";
 
+  console.log("pid", process.pid);
+
   function reinitialize(test) {
-    return Repository.open(reposPath)
+    return delay(14000)
+    // return delay(1)
+    .then(function() {
+      return Repository.open(reposPath)
       .then(function(repository) {
         test.repository = repository;
 
@@ -30,6 +41,7 @@ describe("Commit", function() {
       .then(function(commit) {
         test.commit = commit;
       });
+    });
   }
 
   function commitFile(repo, fileName, fileContent, commitMessage) {
