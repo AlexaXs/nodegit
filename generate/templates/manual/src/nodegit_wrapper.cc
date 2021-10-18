@@ -1,5 +1,8 @@
+#include <iostream>
+
 template<typename Traits>
 NodeGitWrapper<Traits>::NodeGitWrapper(typename Traits::cType *raw, bool selfFreeing, v8::Local<v8::Object> owner) {
+  std::cout << "::" << Traits::className() << "()" << std::endl;
   if (Traits::isSingleton) {
     ReferenceCounter::incrementCountForPointer((void *)raw);
     this->raw = raw;
@@ -43,6 +46,7 @@ NodeGitWrapper<Traits>::NodeGitWrapper(const char *error) {
 
 template<typename Traits>
 NodeGitWrapper<Traits>::~NodeGitWrapper() {
+  std::cout << "::~" << Traits::className() << "()" << std::endl;
   if (Traits::isFreeable && selfFreeing) {
     Traits::free(raw);
     SelfFreeingInstanceCount--;
