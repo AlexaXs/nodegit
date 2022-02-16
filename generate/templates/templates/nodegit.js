@@ -88,6 +88,10 @@ _FilterRegistry.register = promisify(_FilterRegistry_register);
 var _FilterRegistry_unregister = _FilterRegistry.unregister;
 _FilterRegistry.unregister = promisify(_FilterRegistry_unregister);
 
+var _LFS = rawApi.LFS;
+var _LFS_initialize = _LFS.initialize;
+_LFS.initialize = promisify(_LFS_initialize);
+
 /* jshint ignore:end */
 
 // Set the exports prototype to the raw API.
