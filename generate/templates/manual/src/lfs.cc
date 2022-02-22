@@ -9,6 +9,7 @@ extern "C" {
 #include "../include/lock_master.h"
 #include "../include/functions/copy.h"
 #include "../include/lfs.h"
+#include "../include/run_command.h"
 
 using namespace v8;
 
@@ -58,6 +59,17 @@ void GitLFS::InitializeWorker::Execute() {
   baton->error_code = result;
 
   // std::cout << "GitLFS::InitializeWorker::Execute()\n";
+
+
+  std::string res;
+  // test fail  
+  res = nodegit::runcommand::exec("cp tah 2>&1");
+  std::cout << "cp res1: <" << res << ">" << std::endl;
+  // test success
+  res = nodegit::runcommand::exec("echo stdout2 2>&1");
+  std::cout << "stdout res2: <" << res << ">" << std::endl;
+
+
 
   if (result != GIT_OK && git_error_last() != NULL) {
     baton->error = git_error_dup(git_error_last());
