@@ -75,14 +75,8 @@ void GitLFS::InitializeWorker::Execute() {
 
 
   std::string res;
-  // test fail  
-  res = nodegit::runcommand::exec("cp tah 2>&1");
-  std::cout << "cp res1: <" << res << ">" << std::endl;
-  // test success
-  res = nodegit::runcommand::exec("echo stdout2 2>&1");
-  std::cout << "stdout res2: <" << res << ">" << std::endl;
-
-
+  res = nodegit::runcommand::exec("pwd 2>&1", repoPath);
+  std::cout << "res: <" << res << ">" << std::endl;
 
   if (result != GIT_OK && git_error_last() != NULL) {
     baton->error = git_error_dup(git_error_last());
