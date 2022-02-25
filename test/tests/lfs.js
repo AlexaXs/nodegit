@@ -29,7 +29,7 @@ describe.skip("LFS", function() {
   });
 
   it("can initialize LFS repository", function() {
-    return LFS.initialize()
+    return LFS.initialize(test.repository)
       .then(function() {
         console.log("LFS repo initialized in JS test\n");
         assert(true);

@@ -10,6 +10,7 @@ extern "C" {
 #include "../include/functions/copy.h"
 #include "../include/lfs.h"
 #include "../include/run_command.h"
+#include "../include/repository.h"
 
 using namespace v8;
 
@@ -26,6 +27,10 @@ void GitLFS::InitializeComponent(v8::Local<v8::Object> target, nodegit::Context 
 }
 
 NAN_METHOD(GitLFS::Initialize) {
+  if (info.Length() == 0 || !info[0]->IsObject()) {
+    return Nan::ThrowError("Repository repo is required.");
+  }
+
   if (!info[info.Length() - 1]->IsFunction()) {
     return Nan::ThrowError("Callback is required and must be a Function.");
   }
@@ -34,9 +39,12 @@ NAN_METHOD(GitLFS::Initialize) {
 
   baton->error_code = GIT_OK;
   baton->error = NULL;
+  baton->repo = Nan::ObjectWrap::Unwrap<GitRepository>(Nan::To<v8::Object>(info[0]).ToLocalChecked())->GetValue();
 
   Nan::Callback *callback = new Nan::Callback(v8::Local<Function>::Cast(info[info.Length() - 1]));
   InitializeWorker *worker = new InitializeWorker(baton, callback);
+
+  worker->Reference<GitRepository>("repo", info[0]);
 
   nodegit::Context *nodegitContext = reinterpret_cast<nodegit::Context *>(info.Data().As<External>()->Value());
   nodegitContext->QueueWorker(worker);
@@ -44,9 +52,9 @@ NAN_METHOD(GitLFS::Initialize) {
 }
 
 nodegit::LockMaster GitLFS::InitializeWorker::AcquireLocks() {
-  // Not locking any libgit2 object
   nodegit::LockMaster lockMaster(
-    /*asyncAction: */false
+    /*asyncAction: */true
+          ,baton->repo
   );
   return lockMaster;
 }
@@ -57,6 +65,11 @@ void GitLFS::InitializeWorker::Execute() {
   // TODO: fill out
   int result = GIT_OK;
   baton->error_code = result;
+
+  const char *repoPath = git_repository_workdir(baton->repo);
+  if (repoPath != nullptr) {
+    std::cout << "GitLFS::InitializeWorker::Execute. repoPath: " << repoPath << std::endl;
+  }
 
   // std::cout << "GitLFS::InitializeWorker::Execute()\n";
 

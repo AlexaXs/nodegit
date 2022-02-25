@@ -22,6 +22,7 @@ class GitLFS : public Nan::ObjectWrap {
     struct InitializeBaton {
       int error_code;
       const git_error* error;
+      git_repository * repo;
     };
     class InitializeWorker : public nodegit::AsyncWorker {
       public:
