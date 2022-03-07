@@ -851,11 +851,15 @@ static int forEachOdbCb(const git_oid *oid, void *payloadToCast)
 class RepoAnalysis
 {
 public:
-  static constexpr unsigned int kMinThreads = 4;
+  static constexpr unsigned int kMinThreads = 12;//4; DEBUG TIMES TEST
 
   explicit RepoAnalysis(git_repository *repo)
-    : m_repo(repo) {}
-  ~RepoAnalysis() = default;
+    // : m_repo(repo) {}
+    // DEBUG TIMES
+    : m_repo(repo) { timeBegin = std::chrono::system_clock::now(); }
+  // ~RepoAnalysis() = default;
+// DEBUG TIMES
+  ~RepoAnalysis() { timeEnd = std::chrono::system_clock::now(); printTimes(); }
   RepoAnalysis(const RepoAnalysis &other) = delete;
   RepoAnalysis(RepoAnalysis &&other) = delete;
   RepoAnalysis& operator=(const RepoAnalysis &other) = delete;
@@ -863,6 +867,20 @@ public:
 
   int Analyze();
   v8::Local<v8::Object> StatisticsToJS() const;
+
+  // DEBUG TIMES
+  unsigned int nThreadsHW {};
+  unsigned int nThreadsStoreInfo {};
+  unsigned int nThreadsSetReach {};
+  std::chrono::time_point<std::chrono::system_clock> timeBegin {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginStoreObjectsInfo {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginSetObjectsReachability {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginPruneUnreachables {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginStatsCountAndMax {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcBiggestCheckouts {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxTagDepth {};
+  std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxDepth {};
+  std::chrono::time_point<std::chrono::system_clock> timeEnd {};
 
 private:
   // stage 1 methods: store data from repository (with threads)
@@ -894,6 +912,9 @@ private:
   v8::Local<v8::Object> historyStructureToJS() const;
   v8::Local<v8::Object> biggestCheckoutsToJS() const;
 
+  // DEBUG TIMES
+  void printTimes() const;
+
   git_repository *m_repo {nullptr};
   Statistics m_statistics {};
   // odb objects info to build while reading the object database by each thread
@@ -912,18 +933,30 @@ int RepoAnalysis::Analyze()
 {
   int errorCode {GIT_OK};
 
+  // DEBUG TIMES
+  timeBeginStoreObjectsInfo = std::chrono::system_clock::now();
+
   // stage 1
   if ((errorCode = storeObjectsInfo() != GIT_OK)) {
     return errorCode;
   }
+
+  // DEBUG TIMES
+  timeBeginSetObjectsReachability = std::chrono::system_clock::now();
 
   // stage 2
   if (!setObjectsReachability()) {
     return GIT_EUSER;
   }
 
+  // DEBUG TIMES
+  timeBeginPruneUnreachables = std::chrono::system_clock::now();
+
   // stage 3
   pruneUnreachables();
+
+  // DEBUG TIMES
+  timeBeginStatsCountAndMax = std::chrono::system_clock::now();
 
   // stage 4
   statsCountAndMax();
@@ -980,6 +1013,10 @@ int RepoAnalysis::storeObjectsInfo()
   const std::string repoPath = git_repository_path(m_repo);
   const unsigned int numThreads =
     std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
+
+  // DEBUG TIMES
+  nThreadsHW = std::thread::hardware_concurrency();
+  nThreadsStoreInfo = numThreads;
 
   std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
   for (unsigned int i = 0; i < numThreads; ++i) {
@@ -1112,6 +1149,10 @@ bool RepoAnalysis::setObjectsReachability()
 
   const unsigned int numThreads =
     std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
+
+  // DEBUG TIMES
+  nThreadsSetReach = numThreads;
+
   std::vector< std::shared_ptr<WorkerReachCounter> > workers {};
   for (unsigned int i = 0; i < numThreads; ++i) {
     workers.emplace_back(std::make_shared<WorkerReachCounter>(&m_odbObjectsData));
@@ -1484,13 +1525,22 @@ void RepoAnalysis::statsCountAndMax()
  */
 bool RepoAnalysis::statsHistoryAndBiggestCheckouts()
 {
+  // DEBUG TIMES
+  timeBeginCalcBiggestCheckouts = std::chrono::system_clock::now();
+
   if (!calculateBiggestCheckouts()) {
     return false;
   }
 
+  // DEBUG TIMES
+  timeBeginCalcMaxTagDepth = std::chrono::system_clock::now();
+
   if (!calculateMaxTagDepth()) {
     return false;
   }
+
+  // DEBUG TIMES
+  timeBeginCalcMaxDepth = std::chrono::system_clock::now();
 
   // calculate max commit history depth
   m_statistics.historyStructure.maxDepth = m_odbObjectsData.commits.graph.CalculateMaxDepth();
@@ -1794,6 +1844,43 @@ v8::Local<v8::Object> RepoAnalysis::biggestCheckoutsToJS() const
     Nan::New<Number>(m_statistics.biggestCheckouts.numSubmodules));
 
   return result;
+}
+
+// DEBUG TIMES
+void RepoAnalysis::printTimes() const {
+  std::cout << "ThreadsHW: " << nThreadsHW
+  << std::endl;
+  std::cout<< "duration ms (begin -> end): "
+    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBegin).count()
+    << std::endl;
+  std::cout<< "duration ms (begin -> timeBeginStoreObjectsInfo): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginStoreObjectsInfo - timeBegin).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginStoreObjectsInfo -> timeBeginSetObjectsReachability): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginSetObjectsReachability - timeBeginStoreObjectsInfo).count()
+    << std::endl
+    << "Threads used: " << nThreadsStoreInfo
+    << std::endl;
+  std::cout<< "duration ms (timeBeginSetObjectsReachability -> timeBeginPruneUnreachables): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginPruneUnreachables - timeBeginSetObjectsReachability).count()
+    << std::endl
+    << "Threads used: " << nThreadsSetReach
+    << std::endl;
+  std::cout<< "duration ms (timeBeginPruneUnreachables -> timeBeginStatsCountAndMax): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginStatsCountAndMax - timeBeginPruneUnreachables).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginStatsCountAndMax -> timeBeginCalcBiggestCheckouts): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcBiggestCheckouts - timeBeginStatsCountAndMax).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcBiggestCheckouts -> timeBeginCalcMaxTagDepth): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxTagDepth - timeBeginCalcBiggestCheckouts).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcMaxTagDepth -> timeBeginCalcMaxDepth): "
+    << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxDepth - timeBeginCalcMaxTagDepth).count()
+    << std::endl;
+  std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeEnd): "
+    << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginCalcMaxDepth).count()
+    << std::endl;
 }
 
 NAN_METHOD(GitRepository::Statistics)

@@ -391,4 +391,18 @@ describe("Repository", function() {
       // console.log(JSON.stringify(analysisReport,null,2));
     });
   });
+
+  it.only("can obtain statistics from a custom repository", function(done) {
+    this.timeout(456000);
+    let repoPath = "/Users/alex/Repos/AlexaXs/GitKraken/";
+    console.log(repoPath);
+    Repository.open(repoPath)
+    .then(function(repo) {
+      return repo.statistics()
+        .then(function(analysisReport) {
+          console.log(JSON.stringify(analysisReport,null,2));
+        })
+        .then(() => done(), done);
+    });
+  });
 });
