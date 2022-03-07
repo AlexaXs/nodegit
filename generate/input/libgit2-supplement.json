@@ -877,6 +877,13 @@
           "type": "int"
         },
         "group": "status_list"
+      },
+      "lfs_initialize": {
+        "isManual": true,
+        "cFile": "generate/templates/manual/lfs.cc",
+        "isAsync": true,
+        "isPrototypeMethod": false,
+        "group": "lfs"
       }
     },
     "groups": [
@@ -1839,6 +1846,29 @@
               "value": 4
             }
           ]
+        }
+      ],
+      [
+        "lfs_initialize_options",
+        {
+          "decl": [
+            "int local"
+          ],
+          "type": "struct",
+          "value": "lfs_initialize_options",
+          "file": "../../../generate/templates/manual/include/lfs.h",
+          "fields": [
+            {
+              "type": "bool",
+              "name": "local"
+            }
+          ],
+          "used": {
+            "returns": [],
+            "needs": [
+              "git_lfs_initialize"
+            ]
+          }
         }
       ]
     ]

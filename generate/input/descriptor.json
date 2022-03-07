@@ -4667,6 +4667,10 @@
           "ignore": true
         }
       }
+    },
+    "lfs_initialize_options": {
+      "hasConstructor": true,
+      "ignoreInit": true
     }
   }
 }

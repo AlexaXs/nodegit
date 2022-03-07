@@ -13,6 +13,7 @@
 #include "nodegit_wrapper.h"
 #include "configurable_class_wrapper.h"
 #include "v8_helpers.h"
+#include "lfs.h"  // TODO: make it a different header 'lfs_options.h` and add it automatically in 'dependencies'
 
 extern "C" {
   #include <git2.h>

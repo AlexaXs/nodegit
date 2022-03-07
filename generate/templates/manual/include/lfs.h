@@ -5,10 +5,16 @@
 #include "context.h"
 #include "lock_master.h"
 #include "lfs_types.h"
+//#include <string>
 
 extern "C" {
 #include <git2.h>
 }
+
+// TODO: move the structures for lfs options to a different header 'lfs_options.h`
+struct lfs_initialize_options {
+  bool local {};
+};
 
 class GitLFS : public Nan::ObjectWrap {
    public:
