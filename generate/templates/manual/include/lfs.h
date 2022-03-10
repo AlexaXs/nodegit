@@ -4,6 +4,7 @@
 #include <nan.h>
 #include "context.h"
 #include "lock_master.h"
+#include "lfs_types.h"
 
 extern "C" {
 #include <git2.h>
@@ -21,8 +22,9 @@ class GitLFS : public Nan::ObjectWrap {
   private:
     struct InitializeBaton {
       int error_code;
-      const git_error* error;
-      git_repository * repo;
+      const git_error *error;
+      git_repository *repo;
+      std::unique_ptr<LfsCmd> cmd;
     };
     class InitializeWorker : public nodegit::AsyncWorker {
       public:

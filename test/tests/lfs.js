@@ -4,7 +4,7 @@ var path = require("path");
 var local = path.join.bind(path, __dirname);
 
 // TODO: must test it once 'initialize' is done
-describe.skip("LFS", function() {
+describe.only("LFS", function() {
   var NodeGit = require("../../");
 
   var LFS = NodeGit.LFS;
@@ -29,7 +29,7 @@ describe.skip("LFS", function() {
   });
 
   it("can initialize LFS repository", function() {
-    return LFS.initialize(test.repository)
+    return LFS.initialize(test.repository, { local: true })
       .then(function() {
         console.log("LFS repo initialized in JS test\n");
         assert(true);

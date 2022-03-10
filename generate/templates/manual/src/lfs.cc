@@ -41,6 +41,11 @@ NAN_METHOD(GitLFS::Initialize) {
   baton->error = NULL;
   baton->repo = Nan::ObjectWrap::Unwrap<GitRepository>(Nan::To<v8::Object>(info[0]).ToLocalChecked())->GetValue();
 
+  std::unique_ptr<LfsCmdOptsInitialize> lfsCmdOpts = std::make_unique<LfsCmdOptsInitialize>();
+  // TODO: fromJavascript
+  lfsCmdOpts->local = true;
+  baton->cmd = std::make_unique<LfsCmd>(LfsCmd::Type::kInitialize, std::move(lfsCmdOpts));
+
   Nan::Callback *callback = new Nan::Callback(v8::Local<Function>::Cast(info[info.Length() - 1]));
   InitializeWorker *worker = new InitializeWorker(baton, callback);
 
@@ -67,16 +72,11 @@ void GitLFS::InitializeWorker::Execute() {
   baton->error_code = result;
 
   const char *repoPath = git_repository_workdir(baton->repo);
-  if (repoPath != nullptr) {
-    std::cout << "GitLFS::InitializeWorker::Execute. repoPath: " << repoPath << std::endl;
-  }
-
-  // std::cout << "GitLFS::InitializeWorker::Execute()\n";
-
 
   std::string res;
-  res = nodegit::runcommand::exec("ls", "-a", repoPath, true);
-    std::cout << "res: <" << res << ">" << std::endl;
+  res = nodegit::runcommand::exec(baton->cmd->Cmd(), baton->cmd->Args(), repoPath, true);
+
+  std::cout << "res: <" << res << ">" << std::endl;
 
   if (result != GIT_OK && git_error_last() != NULL) {
     baton->error = git_error_dup(git_error_last());
