@@ -851,7 +851,7 @@ static int forEachOdbCb(const git_oid *oid, void *payloadToCast)
 class RepoAnalysis
 {
 public:
-  static constexpr unsigned int kMinThreads = 12;//4; DEBUG TIMES TEST
+  static constexpr unsigned int kMinThreads = 4;
 
   explicit RepoAnalysis(git_repository *repo)
     // : m_repo(repo) {}
@@ -1484,6 +1484,9 @@ void RepoAnalysis::pruneUnreachableBlobs()
  */
 void RepoAnalysis::statsCountAndMax()
 {
+  // DEBUG TIMES
+  std::string maxBlob {};
+
   // commits
   for (auto &info : m_odbObjectsData.commits.info) {
     OdbObjectsData::CommitInfo &commitInfo = info.second;
@@ -1513,8 +1516,28 @@ void RepoAnalysis::statsCountAndMax()
     const size_t objectSize = blobInfo.size;
 
     m_odbObjectsData.blobs.totalSize += objectSize;
+
+    // DEBUG TIMES
+    size_t prevMaxSize = m_odbObjectsData.blobs.maxSize;
+
     m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, objectSize);
+
+    // DEBUG TIMES
+    if (m_odbObjectsData.blobs.maxSize > prevMaxSize) {
+      maxBlob = info.first;
+    }
   }
+  // DEBUG TIMES
+  {
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (int i = 0; i < maxBlob.size(); ++i) {
+        ss << std::setw(2) << static_cast<unsigned int>(static_cast<uint8_t>(maxBlob.at(i)));
+    }
+    std::cout << "max blob sha1: " << ss.str() << std::endl;
+  }
+
+
   // no need to process tags here (we already have the count)
 }
 
