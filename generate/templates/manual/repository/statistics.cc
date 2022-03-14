@@ -855,10 +855,10 @@ public:
 
   explicit RepoAnalysis(git_repository *repo)
     // : m_repo(repo) {}
-    // DEBUG TIMES
+    // DEBUG INFO
     : m_repo(repo) { timeBegin = std::chrono::system_clock::now(); }
   // ~RepoAnalysis() = default;
-// DEBUG TIMES
+// DEBUG INFO
   ~RepoAnalysis() { timeEnd = std::chrono::system_clock::now(); printTimes(); }
   RepoAnalysis(const RepoAnalysis &other) = delete;
   RepoAnalysis(RepoAnalysis &&other) = delete;
@@ -868,7 +868,7 @@ public:
   int Analyze();
   v8::Local<v8::Object> StatisticsToJS() const;
 
-  // DEBUG TIMES
+  // DEBUG INFO
   unsigned int nThreadsHW {};
   unsigned int nThreadsStoreInfo {};
   unsigned int nThreadsSetReach {};
@@ -912,7 +912,7 @@ private:
   v8::Local<v8::Object> historyStructureToJS() const;
   v8::Local<v8::Object> biggestCheckoutsToJS() const;
 
-  // DEBUG TIMES
+  // DEBUG INFO
   void printTimes() const;
 
   git_repository *m_repo {nullptr};
@@ -933,7 +933,7 @@ int RepoAnalysis::Analyze()
 {
   int errorCode {GIT_OK};
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginStoreObjectsInfo = std::chrono::system_clock::now();
 
   // stage 1
@@ -941,7 +941,7 @@ int RepoAnalysis::Analyze()
     return errorCode;
   }
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginSetObjectsReachability = std::chrono::system_clock::now();
 
   // stage 2
@@ -949,13 +949,13 @@ int RepoAnalysis::Analyze()
     return GIT_EUSER;
   }
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginPruneUnreachables = std::chrono::system_clock::now();
 
   // stage 3
   pruneUnreachables();
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginStatsCountAndMax = std::chrono::system_clock::now();
 
   // stage 4
@@ -1014,7 +1014,7 @@ int RepoAnalysis::storeObjectsInfo()
   const unsigned int numThreads =
     std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
 
-  // DEBUG TIMES
+  // DEBUG INFO
   nThreadsHW = std::thread::hardware_concurrency();
   nThreadsStoreInfo = numThreads;
 
@@ -1150,7 +1150,7 @@ bool RepoAnalysis::setObjectsReachability()
   const unsigned int numThreads =
     std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
 
-  // DEBUG TIMES
+  // DEBUG INFO
   nThreadsSetReach = numThreads;
 
   std::vector< std::shared_ptr<WorkerReachCounter> > workers {};
@@ -1484,7 +1484,7 @@ void RepoAnalysis::pruneUnreachableBlobs()
  */
 void RepoAnalysis::statsCountAndMax()
 {
-  // DEBUG TIMES
+  // DEBUG INFO
   std::string maxBlob {};
 
   // commits
@@ -1517,21 +1517,21 @@ void RepoAnalysis::statsCountAndMax()
 
     m_odbObjectsData.blobs.totalSize += objectSize;
 
-    // DEBUG TIMES
+    // DEBUG INFO
     size_t prevMaxSize = m_odbObjectsData.blobs.maxSize;
 
     m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, objectSize);
 
-    // DEBUG TIMES
+    // DEBUG INFO
     if (m_odbObjectsData.blobs.maxSize > prevMaxSize) {
       maxBlob = info.first;
     }
   }
-  // DEBUG TIMES
+  // DEBUG INFO
   {
     std::stringstream ss;
     ss << std::hex << std::setfill('0');
-    for (int i = 0; i < maxBlob.size(); ++i) {
+    for (int i = 0; i < maxBlob.size(); ++i)  {
         ss << std::setw(2) << static_cast<unsigned int>(static_cast<uint8_t>(maxBlob.at(i)));
     }
     std::cout << "max blob sha1: " << ss.str() << std::endl;
@@ -1548,21 +1548,21 @@ void RepoAnalysis::statsCountAndMax()
  */
 bool RepoAnalysis::statsHistoryAndBiggestCheckouts()
 {
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginCalcBiggestCheckouts = std::chrono::system_clock::now();
 
   if (!calculateBiggestCheckouts()) {
     return false;
   }
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginCalcMaxTagDepth = std::chrono::system_clock::now();
 
   if (!calculateMaxTagDepth()) {
     return false;
   }
 
-  // DEBUG TIMES
+  // DEBUG INFO
   timeBeginCalcMaxDepth = std::chrono::system_clock::now();
 
   // calculate max commit history depth
@@ -1869,7 +1869,7 @@ v8::Local<v8::Object> RepoAnalysis::biggestCheckoutsToJS() const
   return result;
 }
 
-// DEBUG TIMES
+// DEBUG INFO
 void RepoAnalysis::printTimes() const {
   std::cout << "ThreadsHW: " << nThreadsHW
   << std::endl;

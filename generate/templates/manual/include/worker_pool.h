@@ -11,7 +11,7 @@
 #include <thread>
 #include <atomic>
 
-// DEBUG TIMES
+// DEBUG INFO
 #include <sstream>
 #include <iomanip>
 
