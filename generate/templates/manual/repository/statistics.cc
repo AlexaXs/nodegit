@@ -213,6 +213,17 @@ namespace {
   };
 
   /**
+   * \struct StatisticsExtra
+   * Stores extra information about the statistics of the analyzed repository.
+   */
+  struct StatisticsExtra
+  {
+    struct {
+      struct { std::string maxOid {}; } blobs;  // oid of Statistics.biggestObjects.blobs.maxSize
+    } biggestObjects;
+  };
+
+  /**
    * \struct OdbObjectsData
    * Structure to store, for each object read from the repository:
    * - its information (size, parents for a commit, etc.)
@@ -321,7 +332,6 @@ namespace {
       std::unordered_set<std::string> unreachables {};
       size_t totalSize {0};
       size_t maxSize {0};
-      std::string maxSizeBlob {}; // ID of the maximum size blob
     } blobs {};
 
     struct {
@@ -929,12 +939,14 @@ namespace {
     v8::Local<v8::Object> biggestObjectsToJS() const;
     v8::Local<v8::Object> historyStructureToJS() const;
     v8::Local<v8::Object> biggestCheckoutsToJS() const;
+    void fillOutStatisticsExtra();
 
     // DEBUG INFO
     void printDebugInfo() const;
 
     git_repository *m_repo {nullptr};
     Statistics m_statistics {};
+    StatisticsExtra m_statisticsExtra {};
     // odb objects info to build while reading the object database by each thread
     OdbObjectsData m_odbObjectsData {};
     // oid and type of peeled references
@@ -985,6 +997,8 @@ namespace {
     }
 
     fillOutStatistics();
+
+    fillOutStatisticsExtra();
 
     return errorCode;
   }
@@ -1534,8 +1548,7 @@ namespace {
 
       m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, objectSize);
       if (m_odbObjectsData.blobs.maxSize == objectSize) {
-        // DEBUG INFO
-        m_odbObjectsData.blobs.maxSizeBlob = info.first;
+        m_statisticsExtra.biggestObjects.blobs.maxOid = info.first;
       }
     }
     // no need to process tags here (we already have the count)
@@ -1869,6 +1882,15 @@ namespace {
     return result;
   }
 
+  /**
+   * RepoAnalysis::fillOutStatisticsExtra
+   */
+  void RepoAnalysis::fillOutStatisticsExtra()
+  {
+    ;
+    // m_statisticsExtra.biggestObjects.blobs.maxOid have already been filled out while running
+  }
+
   // DEBUG INFO
   void RepoAnalysis::printDebugInfo() const {
     // thread info
@@ -1906,8 +1928,9 @@ namespace {
     std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeEnd): "
       << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginCalcMaxDepth).count()
       << std::endl;
-    // objects ids
-    std::cout << "biggest blob: " << convertStrToOidString(m_odbObjectsData.blobs.maxSizeBlob)
+
+    // StatisticsExtra
+    std::cout << "biggest blob: " << convertStrToOidString(m_statisticsExtra.biggestObjects.blobs.maxOid)
       << std::endl;
   }
 } // end anonymous namespace
