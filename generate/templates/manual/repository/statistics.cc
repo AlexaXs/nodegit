@@ -219,7 +219,11 @@ namespace {
   struct StatisticsExtra
   {
     struct {
-      struct { std::string maxOid {}; } blobs;  // oid of Statistics.biggestObjects.blobs.maxSize
+      struct {
+        std::string oid {};  // oid of max size (Statistics.biggestObjects.blobs.maxSize) blob
+        std::string commitOid {};  // commit of of max size blob
+        std::string path {};  // path of max size blob
+      } blob;
     } biggestObjects;
   };
 
@@ -1548,7 +1552,7 @@ namespace {
 
       m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, objectSize);
       if (m_odbObjectsData.blobs.maxSize == objectSize) {
-        m_statisticsExtra.biggestObjects.blobs.maxOid = info.first;
+        m_statisticsExtra.biggestObjects.blob.oid = info.first;
       }
     }
     // no need to process tags here (we already have the count)
@@ -1888,7 +1892,18 @@ namespace {
   void RepoAnalysis::fillOutStatisticsExtra()
   {
     ;
-    // m_statisticsExtra.biggestObjects.blobs.maxOid have already been filled out while running
+    // m_statisticsExtra.biggestObjects.blob.oid have already been filled out while running
+
+    // for (const auto &commit : m_odbObjectsData.commits.info) {
+    //   OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(commit.second.oidTree);
+    //   if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+
+
+
+      // if (!commit.second.reachability) {
+      //   m_odbObjectsData.commits.unreachables.emplace(commit.first);
+      // }
+    }
   }
 
   // DEBUG INFO
@@ -1930,7 +1945,7 @@ namespace {
       << std::endl;
 
     // StatisticsExtra
-    std::cout << "biggest blob: " << convertStrToOidString(m_statisticsExtra.biggestObjects.blobs.maxOid)
+    std::cout << "biggest blob: " << convertStrToOidString(m_statisticsExtra.biggestObjects.blob.oid)
       << std::endl;
   }
 } // end anonymous namespace
