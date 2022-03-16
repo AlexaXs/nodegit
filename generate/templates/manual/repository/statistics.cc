@@ -1,15 +1,12 @@
 namespace {
   /** Helper functions **/
-  // inline std::string convertOidToString(const git_oid *oid) {
-  //   return std::string(reinterpret_cast<const char *>(oid->id), GIT_OID_RAWSZ);
-  // }
 
   // Source string is a git_oid->id converted into std::string
-  inline std::string convertStrToOidString(const std::string &str) {
+  inline std::string convertToOidHexString(const std::string &str) {
     assert(str.size() == GIT_OID_RAWSZ);
     std::stringstream ss {};
     ss << std::hex << std::setfill('0');
-    for (int i = 0; i < str.size(); ++i)  {
+    for (size_t i = 0; i < str.size(); ++i)  {
         ss << std::setw(2) << static_cast<unsigned int>(static_cast<uint8_t>(str.at(i)));
     }
     return ss.str();
@@ -254,6 +251,8 @@ namespace {
     };
 
     struct TreeInfoAndStats {
+      enum class Status {kUndone, kStatsDone, kStatsExtraDone};
+
       TreeInfoAndStats() = default;
       ~TreeInfoAndStats() = default;
       TreeInfoAndStats(const TreeInfoAndStats &other) = delete;
@@ -263,13 +262,13 @@ namespace {
 
       size_t size {0};
       size_t numEntries {0};
-      std::vector<std::string> entryBlobs {};
+      std::unordered_set<std::string> entryBlobs {};
       std::vector< std::pair<std::string, size_t> > entryTreesNameLen {};
       // number of sources from which a tree can be reached:
       // a commit, another tree's entry, or a tag
       uint32_t reachability {kUnreachable};
       TreeStatistics stats {};
-      bool statsDone {false};
+      Status status {Status::kUndone};
     };
 
     struct BlobInfo {
@@ -618,7 +617,7 @@ namespace {
           }
           // store both types of files (symbolic links and non symbolic links) as entryBlob
           te_oid = git_tree_entry_id(te);
-          treeInfoAndStats.entryBlobs.emplace_back(
+          treeInfoAndStats.entryBlobs.emplace(
             reinterpret_cast<const char *>(te_oid->id), GIT_OID_RAWSZ);
         }
           break;
@@ -943,7 +942,8 @@ namespace {
     v8::Local<v8::Object> biggestObjectsToJS() const;
     v8::Local<v8::Object> historyStructureToJS() const;
     v8::Local<v8::Object> biggestCheckoutsToJS() const;
-    void fillOutStatisticsExtra();
+    bool fillOutStatisticsExtra();
+    OdbObjectsData::iterTreeInfo searchStatisticsExtra(const std::string &oidCommit, const std::string &oidTree);
 
     // DEBUG INFO
     void printDebugInfo() const;
@@ -1002,7 +1002,9 @@ namespace {
 
     fillOutStatistics();
 
-    fillOutStatisticsExtra();
+    if (!fillOutStatisticsExtra()) {
+      return GIT_EUSER;
+    }
 
     return errorCode;
   }
@@ -1649,7 +1651,7 @@ namespace {
     OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
 
     // prune recursivity
-    if (treeInfoAndStats.statsDone) {
+    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsDone) {
       return itTreeInfo;
     }
 
@@ -1693,7 +1695,7 @@ namespace {
       treeInfoAndStats.stats.numSubmodules += subTreeInfoAndStats.stats.numSubmodules;
     }
 
-    treeInfoAndStats.statsDone = true;
+    treeInfoAndStats.status = OdbObjectsData::TreeInfoAndStats::Status::kStatsDone;
 
     return itTreeInfo;
   }
@@ -1888,22 +1890,75 @@ namespace {
 
   /**
    * RepoAnalysis::fillOutStatisticsExtra
+   * \return true if success; false if something went wrong.
    */
-  void RepoAnalysis::fillOutStatisticsExtra()
+  bool RepoAnalysis::fillOutStatisticsExtra()
   {
-    ;
     // m_statisticsExtra.biggestObjects.blob.oid have already been filled out while running
 
-    // for (const auto &commit : m_odbObjectsData.commits.info) {
-    //   OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(commit.second.oidTree);
-    //   if (itTreeInfo != m_odbObjectsData.trees.info.end()) {
+    // TODO: sort commits by ascending date.
+    // For example, the search for the commit of the max size blob will stop when we find the first
+    // one if we search by commit's ascending date
 
+    for (auto &commitInfo : m_odbObjectsData.commits.info)
+    {
+      // search StatisticsExtra data from each commit's tree
+      const std::string &commitOidTree = commitInfo.second.oidTree;
 
-
-      // if (!commit.second.reachability) {
-      //   m_odbObjectsData.commits.unreachables.emplace(commit.first);
-      // }
+      OdbObjectsData::iterTreeInfo itTreeInfo {};
+      if ((itTreeInfo = searchStatisticsExtra(commitInfo.first, commitOidTree)) == m_odbObjectsData.trees.info.end()) {
+        return false;
+      }
     }
+
+    return true;
+  }
+
+  /**
+   * RepoAnalysis::searchStatisticsExtra
+   * 
+   * Searches for specific oids from a tree recursivelly to fill out the information for StatisticsExtra.
+   * Same as RepoAnalysis::calculateTreeStatistics, it should be safe against stack overflow.
+   * Returns an iterator to the tree info container, or to end if something went wrong.
+   */
+  OdbObjectsData::iterTreeInfo RepoAnalysis::searchStatisticsExtra(const std::string &oidCommit, const std::string &oidTree)
+  {
+    OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(oidTree);
+    if (itTreeInfo == m_odbObjectsData.trees.info.end()) {
+      return itTreeInfo;
+    }
+
+    OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
+
+    // prune recursivity
+    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone) {
+      return itTreeInfo;
+    }
+
+    // TODO: if max size blob found, stop searching in the following commit/trees
+    
+    // search for max size blob
+    if (treeInfoAndStats.entryBlobs.find(m_statisticsExtra.biggestObjects.blob.oid) !=
+      treeInfoAndStats.entryBlobs.end()) {
+      m_statisticsExtra.biggestObjects.blob.commitOid = oidCommit;
+      return itTreeInfo;
+    }
+
+    // recursively into subtrees
+    for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
+    {
+      OdbObjectsData::iterTreeInfo itSubTreeInfo {};
+      if ((itSubTreeInfo = searchStatisticsExtra(oidCommit, subTreeNameLen.first)) ==
+        m_odbObjectsData.trees.info.end()) {
+        return itSubTreeInfo;
+      }
+
+      // TODO: any other search here????
+    }
+
+    treeInfoAndStats.status = OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone;
+
+    return itTreeInfo;
   }
 
   // DEBUG INFO
@@ -1945,7 +2000,8 @@ namespace {
       << std::endl;
 
     // StatisticsExtra
-    std::cout << "biggest blob: " << convertStrToOidString(m_statisticsExtra.biggestObjects.blob.oid)
+    std::cout << "biggest blob: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.oid)
+      << "commit: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.commitOid)
       << std::endl;
   }
 } // end anonymous namespace
