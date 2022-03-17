@@ -17,7 +17,8 @@ namespace {
    */
   struct CommitsGraphNode
   {
-    CommitsGraphNode(uint32_t aParentsLeft) : parentsLeft(aParentsLeft) {}
+    CommitsGraphNode(const std::string &aCommitOid, uint32_t aParentsLeft)
+      : commitOid(aCommitOid), parentsLeft(aParentsLeft) {}
     CommitsGraphNode() = default;
     ~CommitsGraphNode() = default;
     CommitsGraphNode(const CommitsGraphNode &other) = delete;
@@ -25,6 +26,7 @@ namespace {
     CommitsGraphNode& operator=(const CommitsGraphNode &other) = delete;
     CommitsGraphNode& operator=(CommitsGraphNode &&other) = delete;
 
+    std::string commitOid {};
     std::vector<CommitsGraphNode *> children {};
     uint32_t parentsLeft {0}; // used when calculating the maximum history depth
   };
@@ -65,7 +67,7 @@ namespace {
     const uint32_t numParents = static_cast<uint32_t>(parents.size());
 
     auto emplacePair = m_mapOidNode.emplace(std::make_pair(
-      oidStr, std::make_unique<CommitsGraphNode>(numParents)));
+      oidStr, std::make_unique<CommitsGraphNode>(oidStr, numParents)));
 
     CommitsGraphMap::iterator itNode = emplacePair.first;
 
@@ -146,7 +148,7 @@ namespace {
   void CommitsGraph::addParentNode(const std::string &oidParentStr, CommitsGraphNode *child)
   {
     CommitsGraphMap::iterator itParentNode = m_mapOidNode.emplace(std::make_pair(
-      oidParentStr, std::make_unique<CommitsGraphNode>())).first;
+      oidParentStr, std::make_unique<CommitsGraphNode>(oidParentStr, 0))).first;
 
     // add child to parent
     itParentNode->second->children.emplace_back(child);
