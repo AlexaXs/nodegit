@@ -911,6 +911,7 @@ namespace {
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcBiggestCheckouts {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxTagDepth {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxDepth {};
+    std::chrono::time_point<std::chrono::system_clock> timeBeginSearchStatsExtra {};
     std::chrono::time_point<std::chrono::system_clock> timeEnd {};
 
   private:
@@ -999,6 +1000,9 @@ namespace {
     if (!statsHistoryAndBiggestCheckouts()) {
       return GIT_EUSER;
     }
+
+    // DEBUG INFO
+    timeBeginSearchStatsExtra = std::chrono::system_clock::now();
 
     fillOutStatistics();
 
@@ -1995,8 +1999,11 @@ namespace {
     std::cout<< "duration ms (timeBeginCalcMaxTagDepth -> timeBeginCalcMaxDepth): "
       << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxDepth - timeBeginCalcMaxTagDepth).count()
       << std::endl;
-    std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeEnd): "
-      << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginCalcMaxDepth).count()
+    std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeBeginSearchStatsExtra): "
+      << chrono::duration_cast<chrono::milliseconds>(timeBeginSearchStatsExtra - timeBeginCalcMaxDepth).count()
+      << std::endl;
+    std::cout<< "duration ms (timeBeginSearchStatsExtra -> timeEnd): "
+      << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginSearchStatsExtra).count()
       << std::endl;
 
     // StatisticsExtra
