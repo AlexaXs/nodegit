@@ -226,11 +226,17 @@ namespace {
    */
   struct StatisticsExtra
   {
+    struct SearchControl {
+      std::mutex mtx {};
+      uint32_t commitFoundPos {0};
+    };
+
     struct {
       struct {
         std::string oid {};  // oid of max size (Statistics.biggestObjects.blobs.maxSize) blob
         std::string commitOid {};  // commit of of max size blob
         std::string path {};  // path of max size blob
+        SearchControl sc {};
       } blob;
     } biggestObjects;
   };
@@ -909,11 +915,15 @@ namespace {
     bool Execute(std::unique_ptr<WorkItem> &&work);
 
   private:
-    bool fillOutStatsExtra(const std::string &commitOid);
-    OdbObjectsData::iterTreeInfo searchStatsExtra(const std::string &oidCommit, const std::string &oidTree);
+    bool fillOutStatsExtra(const WorkItemCommit &wi);
+    OdbObjectsData::iterTreeInfo searchStatsExtra(const WorkItemCommit &wi,
+      const std::string &oidTree);
 
-    OdbObjectsData *m_odbObjectsData {nullptr};
-    StatisticsExtra *m_statisticsExtra {nullptr};
+    OdbObjectsData *m_odbObjectsData {nullptr};   // data to read from
+    StatisticsExtra *m_statisticsExtra {nullptr}; // data to write to
+    struct {
+      bool maxBlob {false};
+    } m_foundObjects {};                          // found flags for this worker
   };
 
   /**
@@ -923,7 +933,10 @@ namespace {
   {
     std::unique_ptr<WorkItemCommit> wi {static_cast<WorkItemCommit*>(work.release())};
 
-    if (!fillOutStatsExtra(wi->GetOidStr())) {
+    // reset found flags
+    m_foundObjects.maxBlob = false;
+
+    if (!fillOutStatsExtra(*wi)) {
       return false;
     }
 
@@ -934,17 +947,10 @@ namespace {
    * WorkerStatsExtra::fillOutStatsExtra
    * \return true if success; false if something went wrong.
    */
-  bool WorkerStatsExtra::fillOutStatsExtra(const std::string &commitOid)
+  bool WorkerStatsExtra::fillOutStatsExtra(const WorkItemCommit &wi)
   {
-    // m_statisticsExtra.biggestObjects.blob.oid have already been filled out while running
-
-    // TODO: sort commits by ascending date.
-    // For example, the search for the commit of the max size blob will stop when we find the first
-    // one if we search by commit's ascending date
-
-    // TODO: if max size blob found, stop searching in the following commit/trees
-
-    OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData->commits.info.find(commitOid);
+    // At this point m_statisticsExtra.biggestObjects.blob.oid have already been filled out
+    OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData->commits.info.find(wi.GetOidStr());
     if (itCommitInfo == m_odbObjectsData->commits.info.end()) {
       return false;
     }
@@ -952,7 +958,7 @@ namespace {
     // search StatisticsExtra data from each commit's tree
     const std::string &commitOidTree = itCommitInfo->second.oidTree;
     OdbObjectsData::iterTreeInfo itTreeInfo {};
-    if ((itTreeInfo = searchStatsExtra(commitOid, commitOidTree)) == m_odbObjectsData->trees.info.end()) {
+    if ((itTreeInfo = searchStatsExtra(wi, commitOidTree)) == m_odbObjectsData->trees.info.end()) {
       return false;
     }
 
@@ -967,7 +973,7 @@ namespace {
    * Returns an iterator to the tree info container, or to end if something went wrong.
    */
   OdbObjectsData::iterTreeInfo WorkerStatsExtra::searchStatsExtra(
-    const std::string &oidCommit, const std::string &oidTree)
+    const WorkItemCommit &wi, const std::string &oidTree)
   {
     OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData->trees.info.find(oidTree);
     if (itTreeInfo == m_odbObjectsData->trees.info.end()) {
@@ -977,16 +983,27 @@ namespace {
     OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
 
     // prune recursivity
-    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone) {
+    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone ||
+        m_foundObjects.maxBlob == true) {
       return itTreeInfo;
     }
 
-    // TODO: if max size blob found, stop searching in the following commit/trees
-    
     // search for max size blob
+    StatisticsExtra::SearchControl &maxBlobSC = m_statisticsExtra->biggestObjects.blob.sc;
     if (treeInfoAndStats.entryBlobs.find(m_statisticsExtra->biggestObjects.blob.oid) !=
-      treeInfoAndStats.entryBlobs.end()) {
-      m_statisticsExtra->biggestObjects.blob.commitOid = oidCommit;
+      treeInfoAndStats.entryBlobs.end())
+    {
+      uint32_t commitPos = wi.GetPosition();  
+      { // lock
+        std::lock_guard<std::mutex> lock(maxBlobSC.mtx);
+        // update only if commit position of the found one is lower
+        if (!maxBlobSC.commitFoundPos || commitPos < maxBlobSC.commitFoundPos) {
+          m_statisticsExtra->biggestObjects.blob.commitOid = wi.GetOidStr();
+          maxBlobSC.commitFoundPos = commitPos;
+          std::cout << "maxBlob commit found. Pos: " << commitPos << std::endl;
+        }
+        m_foundObjects.maxBlob = true;
+      }
       return itTreeInfo;
     }
 
@@ -994,7 +1011,7 @@ namespace {
     for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
     {
       OdbObjectsData::iterTreeInfo itSubTreeInfo {};
-      if ((itSubTreeInfo = searchStatsExtra(oidCommit, subTreeNameLen.first)) ==
+      if ((itSubTreeInfo = searchStatsExtra(wi, subTreeNameLen.first)) ==
         m_odbObjectsData->trees.info.end()) {
         return itSubTreeInfo;
       }
