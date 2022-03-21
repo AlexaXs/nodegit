@@ -31,6 +31,9 @@ namespace {
     uint32_t parentsLeft {0}; // used when calculating the maximum history depth
   };
 
+  class WorkerStatsExtra;
+  class WorkItemCommit;
+
   /**
    * \class CommitsGraph
    */
@@ -47,7 +50,7 @@ namespace {
     using CommitsGraphMap = std::unordered_map<std::string, std::unique_ptr<CommitsGraphNode>>;
 
     void AddNode(const std::string &oidStr, const std::vector<std::string> &parents);
-    uint32_t CalculateMaxDepth();
+    uint32_t CalculateMaxDepth(WorkerPool<WorkerStatsExtra,WorkItemCommit> &workerPool);
 
   private:
     void addParentNode(const std::string &oidParentStr, CommitsGraphNode *child);
@@ -110,16 +113,21 @@ namespace {
    * 'P2', and 'P1' has already been considered before in the algorithm as parent of 'C', and now we are
    * processing 'C' as a child from 'P2', which will be the last time, as 'C' has no more parents left).
    * This way we prevent counting 'C' multiple times.
+   * 
+   * Besides, while walking the commits of the graph, it queues them in the workerPool in order to
+   * search for StatisticsExtra data.
    */
-  uint32_t CommitsGraph::CalculateMaxDepth()
+  uint32_t CommitsGraph::CalculateMaxDepth(WorkerPool<WorkerStatsExtra,WorkItemCommit> &workerPool)
   {
     uint32_t maxDepth {0};
     std::unordered_set<CommitsGraphNode *> parents {};
     std::unordered_set<CommitsGraphNode *> children {};
+    uint32_t commitPosition {0};
 
     // start from the root commmits
     for (CommitsGraphNode *root : m_roots) {
       children.insert(root);
+      workerPool.InsertWork(std::make_unique<WorkItemCommit>(++commitPosition, root->commitOid));
     }
 
     while (!children.empty()) {
@@ -131,6 +139,7 @@ namespace {
         for (CommitsGraphNode *child : parent->children) {
           if (--child->parentsLeft == 0) {
             children.insert(child);
+            workerPool.InsertWork(std::make_unique<WorkItemCommit>(++commitPosition, child->commitOid));
           }
         }
       }
@@ -858,6 +867,147 @@ namespace {
   }
 
   /**
+   * \class WorkItemCommit
+   * WorkItem storing commit position in the graph and oid string for the WorkPool.
+   */
+  class WorkItemCommit : public WorkItem {
+  public:
+    WorkItemCommit(uint32_t position, const std::string &oidStr)
+      : m_position(position), m_oidStr(oidStr) {}
+    ~WorkItemCommit() = default;
+    WorkItemCommit(const WorkItemCommit &other) = delete;
+    WorkItemCommit(WorkItemCommit &&other) = delete;
+    WorkItemCommit& operator=(const WorkItemCommit &other) = delete;
+    WorkItemCommit& operator=(WorkItemCommit &&other) = delete;
+    
+    uint32_t GetPosition() const { return m_position; }
+    const std::string& GetOidStr() const { return m_oidStr; }
+
+  private:
+    uint32_t m_position {0};
+    std::string m_oidStr {};
+  };
+
+
+  /**
+   * \class WorkerStatsExtra
+   * Worker for the WorkPool to get StatisticsExtra data
+   * searching from the given commit.
+   */
+  class WorkerStatsExtra : public IWorker
+  {
+  public:
+    WorkerStatsExtra(OdbObjectsData *odbObjectsData, StatisticsExtra *statisticsExtra)
+      : m_odbObjectsData(odbObjectsData), m_statisticsExtra(statisticsExtra) {}
+    ~WorkerStatsExtra() = default;
+    WorkerStatsExtra(const WorkerStatsExtra &other) = delete;
+    WorkerStatsExtra(WorkerStatsExtra &&other) = delete;
+    WorkerStatsExtra& operator=(const WorkerStatsExtra &other) = delete;
+    WorkerStatsExtra& operator=(WorkerStatsExtra &&other) = delete;
+
+    bool Initialize() { return true; }
+    bool Execute(std::unique_ptr<WorkItem> &&work);
+
+  private:
+    bool fillOutStatsExtra(const std::string &commitOid);
+    OdbObjectsData::iterTreeInfo searchStatsExtra(const std::string &oidCommit, const std::string &oidTree);
+
+    OdbObjectsData *m_odbObjectsData {nullptr};
+    StatisticsExtra *m_statisticsExtra {nullptr};
+  };
+
+  /**
+   * WorkerStatsExtra::Execute
+   */
+  bool WorkerStatsExtra::Execute(std::unique_ptr<WorkItem> &&work)
+  {
+    std::unique_ptr<WorkItemCommit> wi {static_cast<WorkItemCommit*>(work.release())};
+
+    if (!fillOutStatsExtra(wi->GetOidStr())) {
+      return false;
+    }
+
+    return true;
+  }
+  
+    /**
+   * WorkerStatsExtra::fillOutStatsExtra
+   * \return true if success; false if something went wrong.
+   */
+  bool WorkerStatsExtra::fillOutStatsExtra(const std::string &commitOid)
+  {
+    // m_statisticsExtra.biggestObjects.blob.oid have already been filled out while running
+
+    // TODO: sort commits by ascending date.
+    // For example, the search for the commit of the max size blob will stop when we find the first
+    // one if we search by commit's ascending date
+
+    // TODO: if max size blob found, stop searching in the following commit/trees
+
+    OdbObjectsData::iterCommitInfo itCommitInfo = m_odbObjectsData->commits.info.find(commitOid);
+    if (itCommitInfo == m_odbObjectsData->commits.info.end()) {
+      return false;
+    }
+
+    // search StatisticsExtra data from each commit's tree
+    const std::string &commitOidTree = itCommitInfo->second.oidTree;
+    OdbObjectsData::iterTreeInfo itTreeInfo {};
+    if ((itTreeInfo = searchStatsExtra(commitOid, commitOidTree)) == m_odbObjectsData->trees.info.end()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * WorkerStatsExtra::searchStatsExtra
+   * 
+   * Searches for specific oids from a tree recursivelly to fill out the information for StatisticsExtra.
+   * Same as RepoAnalysis::calculateTreeStatistics, it should be safe against stack overflow.
+   * Returns an iterator to the tree info container, or to end if something went wrong.
+   */
+  OdbObjectsData::iterTreeInfo WorkerStatsExtra::searchStatsExtra(
+    const std::string &oidCommit, const std::string &oidTree)
+  {
+    OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData->trees.info.find(oidTree);
+    if (itTreeInfo == m_odbObjectsData->trees.info.end()) {
+      return itTreeInfo;
+    }
+
+    OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
+
+    // prune recursivity
+    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone) {
+      return itTreeInfo;
+    }
+
+    // TODO: if max size blob found, stop searching in the following commit/trees
+    
+    // search for max size blob
+    if (treeInfoAndStats.entryBlobs.find(m_statisticsExtra->biggestObjects.blob.oid) !=
+      treeInfoAndStats.entryBlobs.end()) {
+      m_statisticsExtra->biggestObjects.blob.commitOid = oidCommit;
+      return itTreeInfo;
+    }
+
+    // recursively into subtrees
+    for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
+    {
+      OdbObjectsData::iterTreeInfo itSubTreeInfo {};
+      if ((itSubTreeInfo = searchStatsExtra(oidCommit, subTreeNameLen.first)) ==
+        m_odbObjectsData->trees.info.end()) {
+        return itSubTreeInfo;
+      }
+
+      // TODO: any other search here????
+    }
+
+    treeInfoAndStats.status = OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone;
+
+    return itTreeInfo;
+  }
+
+  /**
    * forEachOdbCb. Callback for git_odb_foreach.
    * Returns GIT_OK on success; GIT_EUSER otherwise
    */
@@ -945,8 +1095,6 @@ namespace {
     v8::Local<v8::Object> biggestObjectsToJS() const;
     v8::Local<v8::Object> historyStructureToJS() const;
     v8::Local<v8::Object> biggestCheckoutsToJS() const;
-    bool fillOutStatisticsExtra();
-    OdbObjectsData::iterTreeInfo searchStatisticsExtra(const std::string &oidCommit, const std::string &oidTree);
 
     // DEBUG INFO
     void printDebugInfo() const;
@@ -1007,10 +1155,6 @@ namespace {
     timeBeginSearchStatsExtra = std::chrono::system_clock::now();
 
     fillOutStatistics();
-
-    if (!fillOutStatisticsExtra()) {
-      return GIT_EUSER;
-    }
 
     return errorCode;
   }
@@ -1590,8 +1734,38 @@ namespace {
     // DEBUG INFO
     timeBeginCalcMaxDepth = std::chrono::system_clock::now();
 
-    // calculate max commit history depth
-    m_statistics.historyStructure.maxDepth = m_odbObjectsData.commits.graph.CalculateMaxDepth();
+    // calculate max commit history depth. At the same time, queue the commits to a workerpool
+    // in order from the root(s) of the graph to the leaves.
+    // The workerpool will be used to search for StatisticsExtra data.
+    {
+      // initialize workers for the worker pool
+      const unsigned int numThreads =
+        std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
+
+      // DEBUG INFO
+      nThreadsHW = std::thread::hardware_concurrency();
+      nThreadsStoreInfo = numThreads;
+
+      std::vector< std::shared_ptr<WorkerStatsExtra> > workers {};
+      for (unsigned int i = 0; i < numThreads; ++i) {
+        workers.emplace_back(std::make_shared<WorkerStatsExtra>(&m_odbObjectsData, &m_statisticsExtra));
+      }
+
+      // initialize worker pool
+      // worker pool to search for StatisticsExtra data
+      WorkerPool<WorkerStatsExtra,WorkItemCommit> workerPool {};  
+      workerPool.Init(workers);
+
+      m_statistics.historyStructure.maxDepth = m_odbObjectsData.commits.graph.CalculateMaxDepth(workerPool);
+
+      // wait for the threads to finish and shutdown the work pool
+      workerPool.Shutdown();
+
+      // check there were no problems during execution
+      if (workerPool.Status() != WPStatus::kOk) {
+        return false;
+      }
+    }
 
     return true;
   }
@@ -1892,79 +2066,6 @@ namespace {
       Nan::New<Number>(m_statistics.biggestCheckouts.numSubmodules));
 
     return result;
-  }
-
-  /**
-   * RepoAnalysis::fillOutStatisticsExtra
-   * \return true if success; false if something went wrong.
-   */
-  bool RepoAnalysis::fillOutStatisticsExtra()
-  {
-    // m_statisticsExtra.biggestObjects.blob.oid have already been filled out while running
-
-    // TODO: sort commits by ascending date.
-    // For example, the search for the commit of the max size blob will stop when we find the first
-    // one if we search by commit's ascending date
-
-    for (auto &commitInfo : m_odbObjectsData.commits.info)
-    {
-      // search StatisticsExtra data from each commit's tree
-      const std::string &commitOidTree = commitInfo.second.oidTree;
-
-      OdbObjectsData::iterTreeInfo itTreeInfo {};
-      if ((itTreeInfo = searchStatisticsExtra(commitInfo.first, commitOidTree)) == m_odbObjectsData.trees.info.end()) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * RepoAnalysis::searchStatisticsExtra
-   * 
-   * Searches for specific oids from a tree recursivelly to fill out the information for StatisticsExtra.
-   * Same as RepoAnalysis::calculateTreeStatistics, it should be safe against stack overflow.
-   * Returns an iterator to the tree info container, or to end if something went wrong.
-   */
-  OdbObjectsData::iterTreeInfo RepoAnalysis::searchStatisticsExtra(const std::string &oidCommit, const std::string &oidTree)
-  {
-    OdbObjectsData::iterTreeInfo itTreeInfo = m_odbObjectsData.trees.info.find(oidTree);
-    if (itTreeInfo == m_odbObjectsData.trees.info.end()) {
-      return itTreeInfo;
-    }
-
-    OdbObjectsData::TreeInfoAndStats &treeInfoAndStats = itTreeInfo->second;
-
-    // prune recursivity
-    if (treeInfoAndStats.status == OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone) {
-      return itTreeInfo;
-    }
-
-    // TODO: if max size blob found, stop searching in the following commit/trees
-    
-    // search for max size blob
-    if (treeInfoAndStats.entryBlobs.find(m_statisticsExtra.biggestObjects.blob.oid) !=
-      treeInfoAndStats.entryBlobs.end()) {
-      m_statisticsExtra.biggestObjects.blob.commitOid = oidCommit;
-      return itTreeInfo;
-    }
-
-    // recursively into subtrees
-    for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
-    {
-      OdbObjectsData::iterTreeInfo itSubTreeInfo {};
-      if ((itSubTreeInfo = searchStatisticsExtra(oidCommit, subTreeNameLen.first)) ==
-        m_odbObjectsData.trees.info.end()) {
-        return itSubTreeInfo;
-      }
-
-      // TODO: any other search here????
-    }
-
-    treeInfoAndStats.status = OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone;
-
-    return itTreeInfo;
   }
 
   // DEBUG INFO
