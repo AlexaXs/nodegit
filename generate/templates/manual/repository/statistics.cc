@@ -1503,6 +1503,12 @@ namespace {
         m_odbObjectsData.blobs.unreachables.emplace(blob.first);
       }
     }
+
+    // DEBUG INFO
+    std::cout << "initial unreachable tags: " << m_odbObjectsData.tags.unreachables.size() << std::endl;
+    std::cout << "initial unreachable commits: " << m_odbObjectsData.commits.unreachables.size() << std::endl;
+    std::cout << "initial unreachable trees: " << m_odbObjectsData.trees.unreachables.size() << std::endl;
+    std::cout << "initial unreachable blobs: " << m_odbObjectsData.blobs.unreachables.size() << std::endl;
   }
 
   /**
