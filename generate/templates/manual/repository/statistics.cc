@@ -235,7 +235,8 @@ namespace {
       struct {
         std::string oid {};  // oid of max size (Statistics.biggestObjects.blobs.maxSize) blob
         std::string commitOid {};  // commit of of max size blob
-        std::string path {};  // path of max size blob
+        std::vector<std::string> treePath {};  // sequence of tree oids
+        std::string path {};    // path
         SearchControl sc {};
       } blob;
     } biggestObjects;
@@ -924,6 +925,9 @@ namespace {
     struct {
       bool maxBlob {false};
     } m_foundObjects {};                          // found flags for this worker
+    struct {
+      std::vector<std::string> maxBlob {};
+    } m_treePaths {};                             // tree paths leading to found objects
   };
 
   /**
@@ -935,6 +939,9 @@ namespace {
 
     // reset found flags
     m_foundObjects.maxBlob = false;
+
+    // reset tree paths
+    m_treePaths.maxBlob.clear();
 
     if (!fillOutStatsExtra(*wi)) {
       return false;
@@ -988,6 +995,9 @@ namespace {
       return itTreeInfo;
     }
 
+    // append tree path
+    m_treePaths.maxBlob.push_back(oidTree);
+
     // search for max size blob
     StatisticsExtra::SearchControl &maxBlobSC = m_statisticsExtra->biggestObjects.blob.sc;
     if (treeInfoAndStats.entryBlobs.find(m_statisticsExtra->biggestObjects.blob.oid) !=
@@ -999,15 +1009,15 @@ namespace {
         // update only if commit position of the found one is lower
         if (!maxBlobSC.commitFoundPos || commitPos < maxBlobSC.commitFoundPos) {
           m_statisticsExtra->biggestObjects.blob.commitOid = wi.GetOidStr();
+          m_statisticsExtra->biggestObjects.blob.treePath = m_treePaths.maxBlob;
           maxBlobSC.commitFoundPos = commitPos;
-          std::cout << "maxBlob commit found. Pos: " << commitPos << std::endl;
         }
         m_foundObjects.maxBlob = true;
       }
       return itTreeInfo;
     }
 
-    // recursively into subtrees
+    // search recursively into each subtree
     for (const auto &subTreeNameLen : treeInfoAndStats.entryTreesNameLen)
     {
       OdbObjectsData::iterTreeInfo itSubTreeInfo {};
@@ -1015,11 +1025,16 @@ namespace {
         m_odbObjectsData->trees.info.end()) {
         return itSubTreeInfo;
       }
-
-      // TODO: any other search here????
+      
+      // TODO: search other objects (commit of the max path, etc.)
     }
 
     treeInfoAndStats.status = OdbObjectsData::TreeInfoAndStats::Status::kStatsExtraDone;
+
+    // if max blob not found, remove appended tree path
+    if (!m_foundObjects.maxBlob) {
+      m_treePaths.maxBlob.pop_back();
+    }
 
     return itTreeInfo;
   }
@@ -1070,8 +1085,6 @@ namespace {
 
     // DEBUG INFO
     unsigned int nThreadsHW {};
-    unsigned int nThreadsStoreInfo {};
-    unsigned int nThreadsSetReach {};
     std::chrono::time_point<std::chrono::system_clock> timeBegin {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginStoreObjectsInfo {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginSetObjectsReachability {};
@@ -1080,7 +1093,7 @@ namespace {
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcBiggestCheckouts {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxTagDepth {};
     std::chrono::time_point<std::chrono::system_clock> timeBeginCalcMaxDepth {};
-    std::chrono::time_point<std::chrono::system_clock> timeBeginSearchStatsExtra {};
+    std::chrono::time_point<std::chrono::system_clock> timeBeginProcessStatsExtra {};
     std::chrono::time_point<std::chrono::system_clock> timeEnd {};
 
   private:
@@ -1112,6 +1125,8 @@ namespace {
     v8::Local<v8::Object> biggestObjectsToJS() const;
     v8::Local<v8::Object> historyStructureToJS() const;
     v8::Local<v8::Object> biggestCheckoutsToJS() const;
+    bool processStatsExtra();
+    std::string treeEntryName(const std::string &oidTree, const std::string &oidTreeEntry) const;
 
     // DEBUG INFO
     void printDebugInfo() const;
@@ -1169,9 +1184,13 @@ namespace {
     }
 
     // DEBUG INFO
-    timeBeginSearchStatsExtra = std::chrono::system_clock::now();
+    timeBeginProcessStatsExtra = std::chrono::system_clock::now();
 
     fillOutStatistics();
+
+    if (!processStatsExtra()) {
+      return GIT_EUSER;
+    }
 
     return errorCode;
   }
@@ -1221,7 +1240,6 @@ namespace {
 
     // DEBUG INFO
     nThreadsHW = std::thread::hardware_concurrency();
-    nThreadsStoreInfo = numThreads;
 
     std::vector< std::shared_ptr<WorkerStoreOdbData> > workers {};
     for (unsigned int i = 0; i < numThreads; ++i) {
@@ -1354,9 +1372,6 @@ namespace {
 
     const unsigned int numThreads =
       std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
-
-    // DEBUG INFO
-    nThreadsSetReach = numThreads;
 
     std::vector< std::shared_ptr<WorkerReachCounter> > workers {};
     for (unsigned int i = 0; i < numThreads; ++i) {
@@ -1718,8 +1733,9 @@ namespace {
       const size_t objectSize = blobInfo.size;
 
       m_odbObjectsData.blobs.totalSize += objectSize;
-
       m_odbObjectsData.blobs.maxSize = std::max<size_t>(m_odbObjectsData.blobs.maxSize, objectSize);
+
+      // store data for StatisticsExtra
       if (m_odbObjectsData.blobs.maxSize == objectSize) {
         m_statisticsExtra.biggestObjects.blob.oid = info.first;
       }
@@ -1758,10 +1774,6 @@ namespace {
       // initialize workers for the worker pool
       const unsigned int numThreads =
         std::max<unsigned int>(std::thread::hardware_concurrency(), static_cast<unsigned int>(kMinThreads));
-
-      // DEBUG INFO
-      nThreadsHW = std::thread::hardware_concurrency();
-      nThreadsStoreInfo = numThreads;
 
       std::vector< std::shared_ptr<WorkerStatsExtra> > workers {};
       for (unsigned int i = 0; i < numThreads; ++i) {
@@ -2085,6 +2097,81 @@ namespace {
     return result;
   }
 
+  /**
+   * RepoAnalysis::processStatsExtra
+   */
+  bool RepoAnalysis::processStatsExtra() {
+    // convert tree paths to paths
+    {
+      std::vector<std::string> &treePath = m_statisticsExtra.biggestObjects.blob.treePath;
+      size_t treePathSize = treePath.size();
+      assert(treePathSize >= 1);  // path must have at least the commit's tree
+
+      std::string oidTree {};
+      std::string teName {};
+      if (treePathSize > 1) {
+        for (size_t i = 0; i < treePathSize - 1; ++i) {
+          oidTree = treePath.at(i);
+          teName = treeEntryName(oidTree, treePath.at(i+1));
+          if (teName.empty()) {
+            return false;
+          }
+          m_statisticsExtra.biggestObjects.blob.path.append(teName).append("/");
+        }
+      }
+
+      oidTree = treePath.at(treePathSize-1);
+      teName = treeEntryName(oidTree, m_statisticsExtra.biggestObjects.blob.oid);
+      if (teName.empty()) {
+        return false;
+      }
+
+      m_statisticsExtra.biggestObjects.blob.path.append(teName);
+    }
+
+    return true;
+  }
+
+  /**
+   * RepoAnalysis::treeEntryName
+   * Obtains the name of a tree entry.
+   * 
+   * \param oidTree oid of the tree where the treeEntryOid resides.
+   * \param oidTreeEntry oid of the tree entry we want to obtain the name of.
+   * \return name of the tree entry, or empty string if something went wrong.
+   */
+  std::string RepoAnalysis::treeEntryName(const std::string &oidTree, const std::string &oidTreeEntry) const
+  {
+    // convert to git_tree
+    std::string oidHexStr = convertToOidHexString(oidTree);
+    git_oid treeOid;
+    git_oid_fromstr(&treeOid, oidHexStr.c_str());
+
+    git_tree *tree {nullptr};
+    int errorCode {GIT_OK};
+    if ((errorCode = git_tree_lookup(&tree, m_repo, &treeOid) != GIT_OK)) {
+      return std::string("");
+    }
+
+    // convert to git_tree_entry
+    oidHexStr = convertToOidHexString(oidTreeEntry);
+    git_oid treeEntryOid;
+    git_oid_fromstr(&treeEntryOid, oidHexStr.c_str());
+
+    const git_tree_entry *te = git_tree_entry_byid(tree, &treeEntryOid);
+    if (te == nullptr) {
+      return std::string("");
+    }
+
+    // obtain the tree entry name
+    const char *teName = git_tree_entry_name(te);
+
+    // free objects
+    git_tree_free(tree);
+
+    return std::string(teName);
+  }
+
   // DEBUG INFO
   void RepoAnalysis::printDebugInfo() const {
     // thread info
@@ -2099,13 +2186,9 @@ namespace {
       << std::endl;
     std::cout<< "duration ms (timeBeginStoreObjectsInfo -> timeBeginSetObjectsReachability): "
       << chrono::duration_cast<chrono::milliseconds>(timeBeginSetObjectsReachability - timeBeginStoreObjectsInfo).count()
-      << std::endl
-      << "Threads used: " << nThreadsStoreInfo
       << std::endl;
     std::cout<< "duration ms (timeBeginSetObjectsReachability -> timeBeginPruneUnreachables): "
       << chrono::duration_cast<chrono::milliseconds>(timeBeginPruneUnreachables - timeBeginSetObjectsReachability).count()
-      << std::endl
-      << "Threads used: " << nThreadsSetReach
       << std::endl;
     std::cout<< "duration ms (timeBeginPruneUnreachables -> timeBeginStatsCountAndMax): "
       << chrono::duration_cast<chrono::milliseconds>(timeBeginStatsCountAndMax - timeBeginPruneUnreachables).count()
@@ -2119,17 +2202,18 @@ namespace {
     std::cout<< "duration ms (timeBeginCalcMaxTagDepth -> timeBeginCalcMaxDepth): "
       << chrono::duration_cast<chrono::milliseconds>(timeBeginCalcMaxDepth - timeBeginCalcMaxTagDepth).count()
       << std::endl;
-    std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeBeginSearchStatsExtra): "
-      << chrono::duration_cast<chrono::milliseconds>(timeBeginSearchStatsExtra - timeBeginCalcMaxDepth).count()
+    std::cout<< "duration ms (timeBeginCalcMaxDepth -> timeBeginProcessStatsExtra): "
+      << chrono::duration_cast<chrono::milliseconds>(timeBeginProcessStatsExtra - timeBeginCalcMaxDepth).count()
       << std::endl;
-    std::cout<< "duration ms (timeBeginSearchStatsExtra -> timeEnd): "
-      << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginSearchStatsExtra).count()
+    std::cout<< "duration ms (timeBeginProcessStatsExtra -> timeEnd): "
+      << chrono::duration_cast<chrono::milliseconds>(timeEnd - timeBeginProcessStatsExtra).count()
       << std::endl;
 
     // StatisticsExtra
-    std::cout << "biggest blob: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.oid)
-      << "commit: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.commitOid)
-      << std::endl;
+    std::cout << std::endl
+      << "max size blob: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.oid) << std::endl
+      << "  it's commit: " << convertToOidHexString(m_statisticsExtra.biggestObjects.blob.commitOid) << std::endl
+      << "  it's path: " << m_statisticsExtra.biggestObjects.blob.path << std::endl;
   }
 } // end anonymous namespace
 
