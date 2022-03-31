@@ -116,6 +116,7 @@ require("./enums.js");
 // Import extensions
 // [Manual] extensions
 importExtension("filter_registry");
+importExtension("lfs");
 {% each %}
   {% if type != "enum" %}
     importExtension("{{ filename }}");
