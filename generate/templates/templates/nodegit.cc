@@ -23,6 +23,7 @@
 #include "../include/convenient_patch.h"
 #include "../include/convenient_hunk.h"
 #include "../include/filter_registry.h"
+#include "../include/lfs.h"
 
 using namespace v8;
 
@@ -121,6 +122,7 @@ NAN_MODULE_INIT(init) {
   ConvenientHunk::InitializeComponent(target, nodegitContext);
   ConvenientPatch::InitializeComponent(target, nodegitContext);
   GitFilterRegistry::InitializeComponent(target, nodegitContext);
+  GitLFS::InitializeComponent(target, nodegitContext);
 
   nodegit::LockMaster::InitializeContext();
 }

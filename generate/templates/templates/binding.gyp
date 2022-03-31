@@ -68,6 +68,7 @@
         "src/context.cc",
         "src/v8_helpers.cc",
         "src/tracker_wrap.cc",
+        "src/lfs.cc",
         {% each %}
           {% if type != "enum" %}
             "src/{{ name }}.cc",
