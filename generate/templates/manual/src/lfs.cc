@@ -79,19 +79,17 @@ nodegit::LockMaster GitLFS::InitializeWorker::AcquireLocks() {
 void GitLFS::InitializeWorker::Execute() {
   git_error_clear();
 
-  // TODO: fill out
   int result = GIT_OK;
-  baton->error_code = result;
-  baton->cmd->SetEnv(nodegit::Cmd::Env::kCWD, git_repository_workdir(baton->repo));
-
-  // TODO: remove cout
-  if (nodegit::runcommand::exec(baton->cmd.get())) {
-    std::cout << "exec cmd SUCCESS: <" << baton->cmd->out << ">" << std::endl;
+  const char *repoPath = git_repository_workdir(baton->repo);
+  if (repoPath) {
+    baton->cmd->SetEnv(nodegit::Cmd::Env::kCWD, repoPath);
   }
-  else {
-    std::cout << "exec cmd FAILED: <" << baton->cmd->errorMsg << ">" << std::endl;
+
+  if (!nodegit::runcommand::exec(baton->cmd.get())) {
     result = GIT_EUSER;
   }
+
+  baton->error_code = result;
 
   if (result != GIT_OK && git_error_last() != NULL) {
     baton->error = git_error_dup(git_error_last());
@@ -160,7 +158,8 @@ void GitLFS::InitializeWorker::HandleOKCallback() {
       }
 
       if (!callbackFired) {
-        v8::Local<v8::Object> err = Nan::To<v8::Object>(Nan::Error("Method initialize has thrown an error.")).ToLocalChecked();
+        std::string errorMessage = std::string("Method initialize has thrown an error: ").append(baton->cmd->errorMsg);
+        v8::Local<v8::Object> err = Nan::To<v8::Object>(Nan::Error(errorMessage.c_str())).ToLocalChecked();
         Nan::Set(err, Nan::New("errno").ToLocalChecked(), Nan::New(baton->error_code));
         Nan::Set(err, Nan::New("errorFunction").ToLocalChecked(), Nan::New("LFS.initialize").ToLocalChecked());
         v8::Local<v8::Value> argv[1] = {
