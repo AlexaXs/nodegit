@@ -22,6 +22,22 @@ struct LfsCmdOpts {
 };
 
 /**
+ * \struct LfsCmdOptsInitialize
+ */
+struct LfsCmdOptsInitialize final : public LfsCmdOpts {
+  LfsCmdOptsInitialize() = default;
+  ~LfsCmdOptsInitialize() = default;
+  LfsCmdOptsInitialize(const LfsCmdOptsInitialize &other) = delete;
+  LfsCmdOptsInitialize(LfsCmdOptsInitialize &&other) = delete;
+  LfsCmdOptsInitialize& operator=(const LfsCmdOptsInitialize &other) = delete;
+  LfsCmdOptsInitialize& operator=(LfsCmdOptsInitialize &&other) = delete;
+
+  std::string BuildArgs() const;
+
+  bool local {false};
+};
+
+/**
  * \class LfsCmd
  * An LFS command to execute.
  */
@@ -30,7 +46,7 @@ public:
   static const char* kStrLfsCmd;
 
   // Enumeration describing the type of LFS command
-  enum class Type {kNone};
+  enum class Type {kNone, kInitialize};
 
   LfsCmd(Type lfsCmdType, std::unique_ptr<LfsCmdOpts> &&opts);
   LfsCmd() = delete;
