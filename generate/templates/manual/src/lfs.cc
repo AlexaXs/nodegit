@@ -81,10 +81,12 @@ void GitLFS::InitializeWorker::Execute() {
 
   int result = GIT_OK;
   const char *repoPath = git_repository_workdir(baton->repo);
+  // TODO: execute command if repository is bare?
   if (repoPath) {
     baton->cmd->SetEnv(nodegit::Cmd::Env::kCWD, repoPath);
   }
 
+  // TODO: execute command if '.git/lfs' folder already exists?
   if (!nodegit::runcommand::exec(baton->cmd.get())) {
     result = GIT_EUSER;
   }
