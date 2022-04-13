@@ -3,7 +3,21 @@
 const char* nodegit::LfsCmd::kStrLfsCmd = "git lfs";
 
 /**
- * LfsCmd::LfsCmd
+ * nodegit::LfsCmdOptsInitialize::BuildArgs
+ * 
+ * \return string with arguments for this LFS command.
+ */
+std::string nodegit::LfsCmdOptsInitialize::BuildArgs() const {
+  std::string strArgs {};
+
+  if (local) {
+    strArgs.append("--local");
+  }
+  return strArgs;
+}
+
+/**
+ * nodegit::LfsCmd::LfsCmd
  * 
  * Constructor from type and options.
  */
@@ -20,6 +34,9 @@ std::string nodegit::LfsCmd::Command() const {
   std::string strCmd {nodegit::LfsCmd::kStrLfsCmd};
 
   switch (m_lfsCmdType) {
+    case Type::kInitialize:
+      strCmd.append(" install");
+      break;
     default:
       break;
   }
