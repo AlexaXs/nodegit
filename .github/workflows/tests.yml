@@ -48,6 +48,7 @@ jobs:
           chmod 600 ~/.ssh_tests/id_rsa*
           git config --global user.name "John Doe"
           git config --global user.email johndoe@example.com
+          git config --global --add safe.directory /__w/nodegit/nodegit
 
       - uses: actions/checkout@v2
 
