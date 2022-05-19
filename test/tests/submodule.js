@@ -1,5 +1,6 @@
 var assert = require("assert");
 var path = require("path");
+const garbageCollect = require("../utils/garbage_collect.js");
 var local = path.join.bind(path, __dirname);
 
 describe("Submodule", function() {
@@ -11,6 +12,7 @@ describe("Submodule", function() {
   var repoPath = local("../repos/submodule");
 
   beforeEach(function() {
+    garbageCollect();
     var test = this;
 
     return RepoUtils.createRepository(repoPath)
@@ -106,7 +108,7 @@ describe("Submodule", function() {
       });
   });
 
-  it("can setup and finalize submodule add", function() {
+  it.only("can setup and finalize submodule add", function() {
     this.timeout(30000);
 
     var repo = this.repository;
@@ -158,7 +160,7 @@ describe("Submodule", function() {
       });
   });
 
-  it("can run sync callback without deadlocking", function() {
+  it.only("can run sync callback without deadlocking", function() {
     var repo = this.workdirRepository;
     var submodules = [];
     var submoduleCallback = function(submodule, name, payload) {
