@@ -1,5 +1,6 @@
 var assert = require("assert");
 var path = require("path");
+const garbageCollect = require("../utils/garbage_collect.js");
 var local = path.join.bind(path, __dirname);
 
 describe("Submodule", function() {
@@ -11,15 +12,20 @@ describe("Submodule", function() {
   var repoPath = local("../repos/submodule");
 
   beforeEach(function() {
+    garbageCollect();
     var test = this;
 
+    console.time("beforeEach-create");
     return RepoUtils.createRepository(repoPath)
       .then(function(repo) {
+        console.timeEnd("beforeEach-create");
         test.repository = repo;
+        console.time("beforeEach-open");
         return Repository.open(local("../repos/workdir"));
       })
       .then(function(repo) {
         test.workdirRepository = repo;
+        console.timeEnd("beforeEach-open");
       });
   });
 
@@ -43,15 +49,6 @@ describe("Submodule", function() {
       });
   });
 
-  it("can get submodule status", function() {
-    var repo = this.workdirRepository;
-    var submoduleName = "vendor/libgit2";
-
-    return Submodule.status(repo, submoduleName, Submodule.IGNORE.NONE)
-      .then(function(status) {
-        assert.equal(Submodule.STATUS.IN_CONFIG, status);
-      });
-  });
 
   it("can get submodule location", function() {
     var repo = this.workdirRepository;
@@ -106,7 +103,7 @@ describe("Submodule", function() {
       });
   });
 
-  it("can setup and finalize submodule add", function() {
+  it.only("can setup and finalize submodule add", function() {
     this.timeout(30000);
 
     var repo = this.repository;
@@ -155,6 +152,16 @@ describe("Submodule", function() {
         assert.equal(entries.length, 2);
         assert.equal(entries[0].path, ".gitmodules");
         assert.equal(entries[1].path, submodulePath);
+      });
+  });
+
+  it.only("can get submodule status", function() {
+    var repo = this.workdirRepository;
+    var submoduleName = "vendor/libgit2";
+
+    return Submodule.status(repo, submoduleName, Submodule.IGNORE.NONE)
+      .then(function(status) {
+        assert.equal(Submodule.STATUS.IN_CONFIG, status);
       });
   });
 

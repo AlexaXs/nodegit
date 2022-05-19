@@ -7,6 +7,7 @@ function garbageCollect() {
   for ( ; ; ) {
     global.gc();
     var usedAfterGC = process.memoryUsage().heapUsed;
+    console.log("gc-usedAfterGC: " + usedAfterGC + "\n");
     if (usedAfterGC >= usedBeforeGC) {
       nondecreasingIterations++;
       if (nondecreasingIterations >= terminatingIterations) {

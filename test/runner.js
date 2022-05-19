@@ -34,7 +34,7 @@ const testRepos = [
 ];
 
 before(function() {
-  this.timeout(350000);
+  //this.timeout(350000);
 
   var testUrl = "https://github.com/nodegit/test";
   var constTestUrl = "https://github.com/nodegit/test-frozen";
@@ -96,7 +96,7 @@ before(function() {
 });
 
 beforeEach(function() {
-  this.timeout(4000);
+  this.timeout(1000);
   return exec("git clean -xdf", {cwd: workdirPath})
   .then(function() {
     return exec("git checkout master", {cwd: workdirPath});

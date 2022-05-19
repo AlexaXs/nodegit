@@ -50,11 +50,16 @@ var RepositorySetup = {
 	createRepository:
 	function createRepository(repoPath, isBare){
 		// Create a new repository in a clean directory
+		console.time("createRepo-remove");
 		return fse.remove(repoPath)
 		.then(function() {
+			console.timeEnd("createRepo-remove");
+			console.time("createRepo-ensure");
 			return fse.ensureDir(repoPath);
 		})
 		.then(function() {
+			console.timeEnd("createRepo-ensure");
+			console.log("then it returns NodeGit.Repository.init");
 			var bare = typeof isBare !== "undefined" ? isBare : 0;
 			return NodeGit.Repository.init(repoPath, bare);
 		});
