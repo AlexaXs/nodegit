@@ -159,7 +159,7 @@ describe("Submodule", function() {
       });
   });
 
-  it.only("make remove repo fail", function(done) {
+  it.only("make remove repo fail", function() {
     this.timeout(30000);
 
     var repo = this.repository;
@@ -211,7 +211,7 @@ describe("Submodule", function() {
         return fse.remove(repoPath);
       })
       .then(function() {
-          done();
+        assert.ok(true);
       });
   });
 
