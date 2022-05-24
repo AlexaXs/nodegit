@@ -212,6 +212,10 @@ describe("Submodule", function() {
       })
       .then(function() {
         assert.ok(true);
+      })
+      .catch(function(error) {
+        assert.ok(error instanceof Error);
+        console.log(error.message);
       });
   });
 
