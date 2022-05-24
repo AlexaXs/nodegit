@@ -159,7 +159,8 @@ describe("Submodule", function() {
       });
   });
 
-  it.only("make remove repo fail", function() {
+  // THIS TEST MAKES IT FAIL
+  it.skip("make remove repo fail 01", function() {
     this.timeout(30000);
 
     var repo = this.repository;
@@ -211,14 +212,77 @@ describe("Submodule", function() {
         return fse.remove(repoPath);
       })
       .then(function() {
-        assert.ok(true);
-      })
-      .catch(function(error) {
-        assert.ok(error instanceof Error);
-        console.log(error.message);
+        assert.equal(false, fse.existsSync(repoPath));
       });
   });
 
+  // THIS TEST MAKES IT FAIL
+  it.skip("make remove repo fail 02", function() {
+    this.timeout(30000);
+
+    var repo = this.repository;
+    var submodulePath = "nodegittest";
+    var submoduleUrl = "https://github.com/nodegit/test.git";
+
+    var submodule;
+    var submoduleRepo;
+
+    return NodeGit.Submodule.addSetup(repo, submoduleUrl, submodulePath, 0)
+      .then(function(_submodule) {
+        submodule = _submodule;
+
+        return submodule.init(0);
+      })
+      .then(function() {
+        return submodule.open();
+      })
+      .then(function(_submoduleRepo) {
+        submoduleRepo = _submoduleRepo;
+        return submoduleRepo.fetch("origin", null, null);
+      })
+      .then(function() {
+        return repo.refreshIndex();
+      })
+      .then(function(index) {
+        return fse.remove(repoPath);
+      })
+      .then(function() {
+        assert.equal(false, fse.existsSync(repoPath));
+      });
+  });
+
+  // THIS TEST MAKES IT FAIL
+  it.only("make remove repo fail 03", function() {
+    this.timeout(30000);
+
+    var repo = this.repository;
+    var submodulePath = "nodegittest";
+    var submoduleUrl = "https://github.com/nodegit/test.git";
+
+    var submodule;
+    var submoduleRepo;
+
+    return NodeGit.Submodule.addSetup(repo, submoduleUrl, submodulePath, 0)
+      .then(function(_submodule) {
+        submodule = _submodule;
+
+        return submodule.init(0);
+      })
+      .then(function() {
+        return submodule.open();
+      })
+      .then(function(_submoduleRepo) {
+        submoduleRepo = _submoduleRepo;
+        return submoduleRepo.fetch("origin", null, null);
+      })
+      .then(function() {
+        return fse.remove(repoPath);
+      })
+      .then(function() {
+        assert.equal(false, fse.existsSync(repoPath));
+      });
+  });
+  
   it("can run sync callback without deadlocking", function() {
     var repo = this.workdirRepository;
     var submodules = [];
