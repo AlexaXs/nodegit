@@ -1,5 +1,6 @@
 var assert = require("assert");
 var path = require("path");
+var fse = require("fs-extra");
 var local = path.join.bind(path, __dirname);
 
 describe("Submodule", function() {
@@ -158,6 +159,130 @@ describe("Submodule", function() {
       });
   });
 
+  // THIS TEST MAKES IT FAIL
+  it.skip("make remove repo fail 01", function() {
+    this.timeout(30000);
+
+    var repo = this.repository;
+    var submodulePath = "nodegittest";
+    var submoduleUrl = "https://github.com/nodegit/test.git";
+
+    var submodule;
+    var submoduleRepo;
+
+    return NodeGit.Submodule.addSetup(repo, submoduleUrl, submodulePath, 0)
+      .then(function(_submodule) {
+        submodule = _submodule;
+
+        return submodule.init(0);
+      })
+      .then(function() {
+        return submodule.open();
+      })
+      .then(function(_submoduleRepo) {
+        submoduleRepo = _submoduleRepo;
+        return submoduleRepo.fetch("origin", null, null);
+      })
+      .then(function() {
+        return submoduleRepo.getReference("origin/master");
+      })
+      .then(function(reference) {
+        return reference.peel(NodeGit.Object.TYPE.COMMIT);
+      })
+      .then(function(commit) {
+        return submoduleRepo.createBranch("master", commit.id());
+      })
+      .then(function() {
+        return submodule.addFinalize();
+      })
+      .then(function() {
+        // check whether the submodule exists
+        return Submodule.lookup(repo, submodulePath);
+      })
+      .then(function(submodule) {
+        assert.equal(submodule.name(), submodulePath);
+        // check whether .gitmodules and the submodule are in the index
+        return repo.refreshIndex();
+      })
+      .then(function(index) {
+        var entries = index.entries();
+        assert.equal(entries.length, 2);
+        assert.equal(entries[0].path, ".gitmodules");
+        assert.equal(entries[1].path, submodulePath);
+        return fse.remove(repoPath);
+      })
+      .then(function() {
+        assert.equal(false, fse.existsSync(repoPath));
+      });
+  });
+
+  // THIS TEST MAKES IT FAIL
+  it.skip("make remove repo fail 02", function() {
+    this.timeout(30000);
+
+    var repo = this.repository;
+    var submodulePath = "nodegittest";
+    var submoduleUrl = "https://github.com/nodegit/test.git";
+
+    var submodule;
+    var submoduleRepo;
+
+    return NodeGit.Submodule.addSetup(repo, submoduleUrl, submodulePath, 0)
+      .then(function(_submodule) {
+        submodule = _submodule;
+
+        return submodule.init(0);
+      })
+      .then(function() {
+        return submodule.open();
+      })
+      .then(function(_submoduleRepo) {
+        submoduleRepo = _submoduleRepo;
+        return submoduleRepo.fetch("origin", null, null);
+      })
+      .then(function() {
+        return repo.refreshIndex();
+      })
+      .then(function(index) {
+        return fse.remove(repoPath);
+      })
+      .then(function() {
+        assert.equal(false, fse.existsSync(repoPath));
+      });
+  });
+
+  // THIS TEST MAKES IT FAIL
+  it.only("make remove repo fail 03", function() {
+    this.timeout(30000);
+
+    var repo = this.repository;
+    var submodulePath = "nodegittest";
+    var submoduleUrl = "https://github.com/nodegit/test.git";
+
+    var submodule;
+    var submoduleRepo;
+
+    return NodeGit.Submodule.addSetup(repo, submoduleUrl, submodulePath, 0)
+      .then(function(_submodule) {
+        submodule = _submodule;
+
+        return submodule.init(0);
+      })
+      .then(function() {
+        return submodule.open();
+      })
+      .then(function(_submoduleRepo) {
+        submoduleRepo = _submoduleRepo;
+        return submoduleRepo.fetch("origin", null, null);
+      })
+      .then(function() {
+        return fse.remove(repoPath);
+      })
+      .then(function() {
+        assert.equal(false, fse.existsSync(repoPath));
+      });
+  });
+  
   it("can run sync callback without deadlocking", function() {
     var repo = this.workdirRepository;
     var submodules = [];

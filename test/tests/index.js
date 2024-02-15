@@ -29,6 +29,17 @@ describe("Index", function() {
     this.index.clear();
   });
 
+  // THIS TEST DOES NOT MAKE IT FAIL
+  it.skip("can remove repo's folder after accessing its index", function() {
+    var entries = this.index.entries();
+
+    assert.equal(entries[0].path, ".gitignore");
+    return fse.remove(reposPath)
+    .then(function() {
+      assert.equal(false, fse.existsSync(reposPath));
+    });
+  });
+
   it("can get the index of a repo and examine entries", function() {
     var entries = this.index.entries();
 
